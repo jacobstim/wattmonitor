@@ -204,7 +204,7 @@ def main():
     rt = repeatedtimer.RepeatedTimer(1, 1, loop_1s, meter1, mqttclient)
     rt.first_start()
 
-    rt2 = repeatedtimer.RepeatedTimer(10, 10, loop_60s, meter1, mqttclient)
+    rt2 = repeatedtimer.RepeatedTimer(60, 60, loop_60s, meter1, mqttclient)
     rt2.first_start()
 
     try:
