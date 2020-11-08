@@ -20,18 +20,66 @@ MODBUS_PORT = 502
 
 MQTT_SERVER = "mqtt.home.local"
 MQTT_PORT = 1883
-PUBTOPIC1="smarthome/energy/iem3155/data"
+PUBTOPIC1="smarthome/energy/iem3155/data/sec"               # Publish here every second
+PUBTOPIC_AVG="smarthome/energy/iem3155/data/min"            # Publish here every minute
+
+########################################################################################
+### MEASUREMENT STORAGE
+########################################################################################
+
+class PowerMeasurements():
+    # We store in the dictionary:
+    # * key = measurement name
+    # * value = tuple (count, totalvalue)
+    valuestore = {}
+
+    def __init__(self):
+        self.valuestore = {}
+
+    def clear(self):
+        self.valuestore.clear()
+
+    def add(self, index, value):
+        if ~(index in self.valuestore.keys()):
+            self.valuestore[index] = [0, 0]
+        self.valuestore[index][0] += 1
+        self.valuestore[index][1] += value
+
+    def set(self, index, value):
+        self.valuestore[index] = [1, value]
+
+    def average(self, index):
+        if index in self.valuestore.keys():
+            if self.valuestore[index][0] > 0:
+                return self.valuestore[index][1] / self.valuestore[index][0]
+        return 0
+
+    def to_json(self):
+        # Create a new dictionary that we will serialize into JSON
+        measurements = dict.fromkeys(self.valuestore.keys())
+        for index in measurements.keys():
+            if self.valuestore[index][0] > 0:
+                measurements[index] = self.valuestore[index][1] / self.valuestore[index][0]
+
+        return json.dumps(measurements)
 
 ########################################################################################
 ### LOOP
 ########################################################################################
 
-def loop(meter, mqttclient):
+# These get updated every second and pushed every minute
+minute_data = PowerMeasurements()
+
+# This pushes the data every second for analytical purposes
+def loop_1s(meter, mqttclient):
     measurements = {}
     measurements["timestamp"] = datetime.now().isoformat()
 
     # Voltages
-    measurements["voltage_L_L"] = meter.md_voltage_L_L()
+    value = meter.md_voltage_L_L()
+    minute_data.add("voltage_L_L", value)
+    measurements["voltage_L_L"] = value
+
     measurements["voltage_L1_L2"] = meter.md_voltage_L1_L2()
     measurements["voltage_L2_L3"] = meter.md_voltage_L2_L3()
     measurements["voltage_L3_L1"] = meter.md_voltage_L3_L1()
@@ -39,27 +87,49 @@ def loop(meter, mqttclient):
     measurements["voltage_L2_N"] = meter.md_voltage_L2_N()
     measurements["voltage_L3_N"] = meter.md_voltage_L3_N()
 
+    # Power
+    value = meter.md_power()
+    minute_data.add("power", value)
+    measurements["power"] = value
+
+    value = meter.md_power_L1()
+    minute_data.add("power_L1", value)
+    measurements["power_L1"] = value
+
+    value = meter.md_power_L2()
+    minute_data.add("power_L2", value)
+    measurements["power_L2"] = value
+
+    value = meter.md_power_L3()
+    minute_data.add("power_L3", value)
+    measurements["power_L3"] = value
+
     # Currents
     measurements["current"] = meter.md_current()
     measurements["current_L1"] = meter.md_current_L1()
     measurements["current_L2"] = meter.md_current_L2()
     measurements["current_L3"] = meter.md_current_L3()
 
-    # Power
-    measurements["power"] = meter.md_power()
-    measurements["power_L1"] = meter.md_power_L1()
-    measurements["power_L2"] = meter.md_power_L2()
-    measurements["power_L3"] = meter.md_power_L3()
-
     # Other
     measurements["powerfactor"] = meter.md_powerfactor()
     measurements["frequency"] = meter.md_frequency()
 
     # Totals
-    measurements["total_active_in"] = meter.ed_total()
-    measurements["total_active_out"] = meter.ed_total_export()
-    measurements["total_reactive_in"] = meter.ed_total_reactive_import()
-    measurements["total_reactive_out"] = meter.ed_total_reactive_export()
+    value = meter.ed_total()
+    minute_data.set("total_active_in", value)
+    measurements["total_active_in"] = value
+
+    value = meter.ed_total_export()
+    minute_data.set("total_active_out", value)
+    measurements["total_active_out"] = value
+
+    value = meter.ed_total_reactive_import()
+    minute_data.set("total_reactive_in", value)
+    measurements["total_reactive_in"] = value
+
+    value = meter.ed_total_reactive_export()
+    minute_data.set("total_reactive_out", value)
+    measurements["total_reactive_out"] = value
 
     # Convert to JSON
     jsondata = json.dumps(measurements)
@@ -67,6 +137,18 @@ def loop(meter, mqttclient):
 
     # Post to MQTT server
     mqttclient.publish(PUBTOPIC1, payload = jsondata, qos=1)
+
+
+# This publishes average data every 60 seconds for dashboarding purposes
+def loop_60s(meter, mqttclient):
+    # Retrieve averages of past 60 minutes
+    jsondata = minute_data.to_json()
+    logging.debug("Per minute data: " + jsondata)
+    # Post to MQTT server
+    mqttclient.publish(PUBTOPIC_AVG, payload = jsondata, qos=1)
+
+    # Clear and restart
+    minute_data.clear()
 
 ########################################################################################
 ### CALLBACKS
@@ -119,8 +201,11 @@ def main():
     mqttclient.loop_start()     # Launch seperate thread for checking for messages, keep connection alive, ...
 
     # Initialize recurring task, our 'loop' function
-    rt = repeatedtimer.RepeatedTimer(1, 1, loop, meter1, mqttclient)
+    rt = repeatedtimer.RepeatedTimer(1, 1, loop_1s, meter1, mqttclient)
     rt.first_start()
+
+    rt2 = repeatedtimer.RepeatedTimer(10, 10, loop_60s, meter1, mqttclient)
+    rt2.first_start()
 
     try:
         while(True):
