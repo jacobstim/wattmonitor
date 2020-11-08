@@ -80,12 +80,29 @@ def loop_1s(meter, mqttclient):
     minute_data.add("voltage_L_L", value)
     measurements["voltage_L_L"] = value
 
-    measurements["voltage_L1_L2"] = meter.md_voltage_L1_L2()
-    measurements["voltage_L2_L3"] = meter.md_voltage_L2_L3()
-    measurements["voltage_L3_L1"] = meter.md_voltage_L3_L1()
-    measurements["voltage_L1_N"] = meter.md_voltage_L1_N()
-    measurements["voltage_L2_N"] = meter.md_voltage_L2_N()
-    measurements["voltage_L3_N"] = meter.md_voltage_L3_N()
+    value = meter.md_voltage_L1_L2()
+    minute_data.add("voltage_L1_L2", value)
+    measurements["voltage_L1_L2"] = value
+
+    value = meter.md_voltage_L2_L3()
+    minute_data.add("voltage_L2_L3", value)
+    measurements["voltage_L2_L3"] =
+
+    value = meter.md_voltage_L3_L1()
+    minute_data.add("voltage_L3_L1", value)
+    measurements["voltage_L3_L1"] = value
+
+    value = meter.md_voltage_L1_N()
+    minute_data.add("voltage_L1_N", value)
+    measurements["voltage_L1_N"] = value
+
+    value = meter.md_voltage_L2_N()
+    minute_data.add("voltage_L2_N", value)
+    measurements["voltage_L2_N"] = value
+
+    value = meter.md_voltage_L3_N()
+    minute_data.add("voltage_L3_N", value)
+    measurements["voltage_L3_N"] = value
 
     # Power
     value = meter.md_power()
@@ -105,14 +122,30 @@ def loop_1s(meter, mqttclient):
     measurements["power_L3"] = value
 
     # Currents
-    measurements["current"] = meter.md_current()
-    measurements["current_L1"] = meter.md_current_L1()
-    measurements["current_L2"] = meter.md_current_L2()
-    measurements["current_L3"] = meter.md_current_L3()
+    value = meter.md_current()
+    minute_data.add("current", value)
+    measurements["current"] = value
+
+    value = meter.md_current_L1()
+    minute_data.add("current_L1", value)
+    measurements["current_L1"] = value
+
+    value = meter.md_current_L2()
+    minute_data.add("current_L2", value)
+    measurements["current_L2"] = value
+
+    value = meter.md_current_L3()
+    minute_data.add("current_L3", value)
+    measurements["current_L3"] = value
 
     # Other
-    measurements["powerfactor"] = meter.md_powerfactor()
-    measurements["frequency"] = meter.md_frequency()
+    value = meter.md_powerfactor()
+    minute_data.add("powerfactor", value)
+    measurements["powerfactor"] = value
+
+    value = meter.md_frequency()
+    minute_data.add("frequency", value)
+    measurements["frequency"] = value
 
     # Totals
     value = meter.ed_total()
