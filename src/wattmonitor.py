@@ -86,7 +86,7 @@ def loop_1s(meter, mqttclient):
 
     value = meter.md_voltage_L2_L3()
     minute_data.add("voltage_L2_L3", value)
-    measurements["voltage_L2_L3"] =
+    measurements["voltage_L2_L3"] = value
 
     value = meter.md_voltage_L3_L1()
     minute_data.add("voltage_L3_L1", value)
