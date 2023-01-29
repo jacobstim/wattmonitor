@@ -2,7 +2,7 @@ import modbus_tk.defines as cst
 from datetime import datetime
 import struct
 
-class iMEM3155:
+class iMEM2150:
     
     """
     This class implements the Schneider Electric iM3155 meter values
@@ -30,11 +30,11 @@ class iMEM3155:
     def has_L1(self):
         return True
     def has_L2(self):
-        return True
+        return False
     def has_L3(self):
-        return True
+        return False
     def has_threephase(self):
-        return True
+        return False
 
 #################################################################################################
 ### SYSTEM functions
@@ -61,7 +61,7 @@ class iMEM3155:
 
         :return: Manufacturing date of the energy meter as a datetime object
         """
-        mdate = self._readregister(0x0083, 4, '>HHHH')
+        mdate = self._readregister(132, 4, '>HHHH')
         return self._decodetime(mdate)
 
 #################################################################################################
@@ -71,86 +71,31 @@ class iMEM3155:
     def md_current_L1(self):
         return (self._readregister(0x0BB7, 2, '>f'))[0]
 
-    def md_current_L2(self):
-        return (self._readregister(0x0BB9, 2, '>f'))[0]
-
-    def md_current_L3(self):
-        return (self._readregister(0x0BBB, 2, '>f'))[0]
-
-    def md_current(self):           # Average current
-        return (self._readregister(0x0BC1, 2, '>f'))[0]
-
-    def md_voltage_L1_L2(self):
-        return (self._readregister(0x0BCB, 2, '>f'))[0]
-
-    def md_voltage_L2_L3(self):
-        return (self._readregister(0x0BCD, 2, '>f'))[0]
-
-    def md_voltage_L3_L1(self):
-        return (self._readregister(0x0BCF, 2, '>f'))[0]
-
-    def md_voltage_L_L(self):
-        return (self._readregister(0x0BD1, 2, '>f'))[0]
-
     def md_voltage_L1_N(self):
         return (self._readregister(0x0BD3, 2, '>f'))[0]
 
-    def md_voltage_L2_N(self):
-        return (self._readregister(0x0BD5, 2, '>f'))[0]
+    def md_current(self):           
+        return self.md_current_L1()
 
-    def md_voltage_L3_N(self):
-        return (self._readregister(0x0BD7, 2, '>f'))[0]
-
-    def md_voltage(self):   # Average L-N voltage
-        return (self._readregister(0x0BDB, 2, '>f'))[0]
+    def md_voltage(self):   
+        return self.md_voltage_L1_N()
 
     def md_power_L1(self):
-        """
-        Retrieve actual power usage for phase 1
-
-        :return: Power usage in W (Watts)
-        """
         return (self._readregister(0x0BED, 2, '>f'))[0]*1000
 
-    def md_power_L2(self):
-        """
-        Retrieve actual power usage for phase 2
-
-        :return: Power usage in W (Watts)
-        """
-        return (self._readregister(0x0BEF, 2, '>f'))[0]*1000
-
-    def md_power_L3(self):
-        """
-        Retrieve actual power usage for phase 3
-
-        :return: Power usage in W (Watts)
-        """
-        return (self._readregister(0x0BF1, 2, '>f'))[0]*1000
-
     def md_power(self):
-        """
-        Retrieve actual total power usage for all phases
+        return self.md_power_L1()
 
-        :return: Power usage in W (Watts)
-        """
-        return (self._readregister(0x0BF3, 2, '>f'))[0]*1000
-
-    def md_power_reactive(self):    # Not applicable for iEM3150 / iEM3250 / iEM3350
+    def md_power_reactive(self):
         return (self._readregister(0x0BFB, 2, '>f'))[0]
 
-    def md_power_apparent(self):    # Not applicable for iEM3150 / iEM3250 / iEM3350
+    def md_power_apparent(self):
         return (self._readregister(0x0C03, 2, '>f'))[0]
 
     def md_powerfactor(self):
         return (self._readregister(0x0C0B, 2, '>f'))[0]
 
     def md_frequency(self):
-        """
-        Retrieve current net frequency
-
-        :return: Frequency in Hz (Hertz)
-        """
         return (self._readregister(0x0C25, 2, '>f'))[0]
 
 #################################################################################################
@@ -165,7 +110,7 @@ class iMEM3155:
         """
         return (self._readregister(0xB02B, 2, '>f'))[0]
 
-    def ed_total_export(self):              # Not applicable for iEM3150 / iEM3250 / iEM3350
+    def ed_total_export(self):
         """
         Retrieve total Active Energy export
 
@@ -173,7 +118,7 @@ class iMEM3155:
         """
         return (self._readregister(0xB02D, 2, '>f'))[0]
 
-    def ed_total_reactive_import(self):     # Not applicable for iEM3150 / iEM3250 / iEM3350
+    def ed_total_reactive_import(self):
         """
         Retrieve total Reactive Energy import
 
@@ -181,7 +126,7 @@ class iMEM3155:
         """
         return (self._readregister(0xB02F, 2, '>f'))[0]
 
-    def ed_total_reactive_export(self):     # Not applicable for iEM3150 / iEM3250 / iEM3350
+    def ed_total_reactive_export(self):
         """
         Retrieve total Reactive Energy export
 
