@@ -7,6 +7,7 @@ from repeatedtimer import repeatedtimer
 from datetime import datetime
 import logging
 import json
+import itertools
 
 # Meters to use
 from meters import A9MEM3155
@@ -50,7 +51,7 @@ class PowerMeasurements():
         self.valuestore.clear()
 
     def add(self, index, value):
-        if ~(index in self.valuestore.keys()):
+        if not(index in self.valuestore.keys()):
             self.valuestore[index] = [0, 0]
         self.valuestore[index][0] += 1
         self.valuestore[index][1] += value
@@ -217,8 +218,8 @@ class MeterDataHandler():
 ########################################################################################
 
 
-# This pushes the data every second for analytical purposes
-def loop_1s(meters):
+# This pushes the data every 5 seconds for analytical purposes
+def loop_5s(meters):
     # Read the secondly data for every meter and send it
     for meterhandler in meters:
         meterhandler.pushMeasurements()
@@ -234,27 +235,40 @@ def loop_60s(meters):
 ### CALLBACKS
 ########################################################################################
 
-#def modbus_on_before_connect(args):
-#    master = args[0]
-#    logging.debug("on_before_connect {0} {1}".format(master._host, master._port))
-
-#def modbus_on_after_recv(data):
-#    master, bytes_data = data
-#    logging.info(bytes_data)
-
-#def modbus_on_after_recv(args):
-#    response = args[1]
-#   logging.debug("on_after_recv {0} bytes received".format(len(response)))
-
 # The callback for when the client receives a CONNACK response from the server.
-def mqtt_on_connect(client, userdata, flags, rc):
-    logging.info("Connected to MQTT server (result code " + str(rc) + ")")
+def mqtt_on_connect(client, userdata, flags, reason_code, properties):
+    print(f"Connected to MQTT server with result code {reason_code}")
 
 ########################################################################################
 ### MAIN
 ########################################################################################
 
 meters = []
+
+def connect_modbus(master, logger):
+    backoff = itertools.chain((1, 2, 4, 8, 16, 32, 64, 128, 256, 300), itertools.repeat(300))
+    while True:
+        try:
+            master.open()
+            logger.info("Connected to Modbus server")
+            return
+        except modbus_tk.modbus.ModbusError as exc:
+            delay = next(backoff)
+            logger.error("%s - Code=%d. Retrying in %d seconds...", exc, exc.get_exception_code(), delay)
+            sleep(delay)
+
+def connect_mqtt(mqttclient, logger):
+    backoff = itertools.chain((1, 2, 4, 8, 16, 32, 64, 128, 256, 300), itertools.repeat(300))
+    while True:
+        try:
+            mqttclient.connect(MQTT_SERVER, MQTT_PORT, 60)
+            mqttclient.loop_start()
+            logger.info("Connected to MQTT server")
+            return
+        except Exception as exc:
+            delay = next(backoff)
+            logger.error("MQTT connection failed: %s. Retrying in %d seconds...", exc, delay)
+            sleep(delay)
 
 def main():
     # Configure Modbus
@@ -267,17 +281,15 @@ def main():
         # Configure Modbus TCP server
         master = modbus_tcp.TcpMaster(host=MODBUS_SERVER, port=MODBUS_PORT)
         master.set_timeout(5.0)
+        connect_modbus(master, logger)
 
     except modbus_tk.modbus.ModbusError as exc:
         logger.error("%s - Code=%d", exc, exc.get_exception_code())
 
-
     # Initialize MQTT
-    mqttclient = mqtt.Client()
+    mqttclient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     mqttclient.on_connect = mqtt_on_connect     # On connect handler
-
-    mqttclient.connect(MQTT_SERVER, MQTT_PORT, 60)
-    mqttclient.loop_start()     # Launch seperate thread for checking for messages, keep connection alive, ...
+    connect_mqtt(mqttclient, logger)
 
     # Initialize meters
     meter1 = A9MEM3155.iMEM3155(master, 10)             # MODBUS ID = 10
@@ -303,7 +315,7 @@ def main():
     meters.append(meterhandler5)
 
     # Initialize recurring task, our 'loop' function
-    rt = repeatedtimer.RepeatedTimer(1, 1, loop_1s, meters)
+    rt = repeatedtimer.RepeatedTimer(5, 5, loop_5s, meters)
     rt.first_start()
 
     rt2 = repeatedtimer.RepeatedTimer(60, 60, loop_60s, meters)
@@ -312,6 +324,12 @@ def main():
     try:
         while(True):
             sleep(5)
+            if not master._is_opened:
+                logger.warning("Modbus connection lost. Attempting to reconnect...")
+                connect_modbus(master, logger)
+            if not mqttclient.is_connected():
+                logger.warning("MQTT connection lost. Attempting to reconnect...")
+                connect_mqtt(mqttclient, logger)
 
     except KeyboardInterrupt:
         logging.info('Stopping program!')
