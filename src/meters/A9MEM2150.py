@@ -139,9 +139,9 @@ class iMEM2150:
         """
         Retrieve total Active Energy import
 
-        :return: Energy in kWh (kWatt-hour)
+        :return: Energy in Wh (kWatt-hour) -- It returns in Wh, not kWh!!!
         """
-        return (self._readregister(0xB02B, 2, '>f'))[0]
+        return (self._readregister(0xB02B, 2, '>f'))[0]/1000.0
 
     def ed_total_export(self):
         """
@@ -149,7 +149,7 @@ class iMEM2150:
 
         :return: Energy in kWh (kWatt-hour)
         """
-        return (self._readregister(0xB02D, 2, '>f'))[0]
+        return (self._readregister(0xB02D, 2, '>f'))[0]/1000.0
 
     def ed_total_reactive_import(self):
         """
@@ -157,7 +157,7 @@ class iMEM2150:
 
         :return: Energy in kVARh (kVolt-Amper(Reactive)-hour)
         """
-        return (self._readregister(0xB02F, 2, '>f'))[0]
+        return (self._readregister(0xB02F, 2, '>f'))[0]/1000.0
 
     def ed_total_reactive_export(self):
         """
@@ -165,7 +165,7 @@ class iMEM2150:
 
         :return: Energy in kVARh (kVolt-Amper(Reactive)-hour)
         """
-        return (self._readregister(0xB031, 2, '>f'))[0]
+        return (self._readregister(0xB031, 2, '>f'))[0]/1000.0
 
 
 #################################################################################################
