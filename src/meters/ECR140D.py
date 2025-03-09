@@ -1,6 +1,8 @@
-import modbus_tk.defines as cst
+from enum import Enum
 from datetime import datetime
 import struct
+import modbus_tk.defines as cst
+from .measurements import MeasurementType
 
 class ECR140D:
     
@@ -22,6 +24,10 @@ class ECR140D:
 #            self._do_open()
 #            self._is_opened = True
 
+    # Retrieve Modbus ID
+    def modbus_id(self):
+        return self._address
+
 #################################################################################################
 ### Module functions
 #################################################################################################
@@ -35,6 +41,33 @@ class ECR140D:
         return False
     def has_threephase(self):
         return False
+
+    def supported_measurements(self):
+        measurements = []
+        measurements.append(MeasurementType.VOLTAGE)
+        measurements.append(MeasurementType.CURRENT)
+        measurements.append(MeasurementType.POWER)
+        measurements.append(MeasurementType.POWER_REACTIVE)        
+        measurements.append(MeasurementType.POWER_APPARENT)
+        measurements.append(MeasurementType.POWER_FACTOR)
+        measurements.append(MeasurementType.FREQUENCY)
+        measurements.append(MeasurementType.ENERGY_TOTAL)
+        measurements.append(MeasurementType.ENERGY_TOTAL_EXPORT)
+        measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT)
+        measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT)
+        if self.has_L1():
+            measurements.append(MeasurementType.VOLTAGE_L1_N)
+            measurements.append(MeasurementType.POWER_L1)
+            measurements.append(MeasurementType.CURRENT_L1)
+        if self.has_L2():
+            measurements.append(MeasurementType.VOLTAGE_L2_N)
+            measurements.append(MeasurementType.POWER_L2)
+            measurements.append(MeasurementType.CURRENT_L2)
+        if self.has_L3():
+            measurements.append(MeasurementType.VOLTAGE_L3_N)
+            measurements.append(MeasurementType.POWER_L3)
+            measurements.append(MeasurementType.CURRENT_L3)
+        return measurements
 
 #################################################################################################
 ### SYSTEM functions

@@ -8,11 +8,20 @@ from datetime import datetime
 import logging
 import json
 import itertools
+from enum import Enum
+from meters.measurements import MeasurementType
 
 # Meters to use
 from meters import A9MEM3155
 from meters import A9MEM2150
 from meters import ECR140D
+
+# Mapping between meter types and corresponding classes
+meter_classes = {
+    "A9MEM3155": A9MEM3155.iMEM3155,
+    "A9MEM2150": A9MEM2150.iMEM2150,
+    "ECR140D": ECR140D.ECR140D
+}
 
 ########################################################################################
 ### NETWORK CONFIGURATION
@@ -23,17 +32,15 @@ MODBUS_PORT = 502
 
 MQTT_SERVER = "mqtt.home.local"
 MQTT_PORT = 1883
-PUBTOPIC1="smarthome/energy/iem3155/data/sec"                # Publish here every second
-PUBTOPIC1_AVG="smarthome/energy/iem3155/data/min"            # Publish here every minute
-PUBTOPIC2="smarthome/energy/iem2150-airco1/data/sec"         # Publish here every second
-PUBTOPIC2_AVG="smarthome/energy/iem2150-airco1/data/min"     # Publish here every minute
-PUBTOPIC3="smarthome/energy/iem2150-airco2/data/sec"         # Publish here every second
-PUBTOPIC3_AVG="smarthome/energy/iem2150-airco2/data/min"     # Publish here every minute
-PUBTOPIC4="smarthome/energy/ecr140d-unit1/data/sec"          # Publish here every second
-PUBTOPIC4_AVG="smarthome/energy/ecr140d-unit1/data/min"      # Publish here every minute
-PUBTOPIC5="smarthome/energy/ecr140d-unit2/data/sec"          # Publish here every second
-PUBTOPIC5_AVG="smarthome/energy/ecr140d-unit2/data/min"      # Publish here every minute
- 
+
+METER_CONFIG = [
+    {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min"},
+    {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min"},
+    {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min"},
+    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min"},
+    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min"}
+]
+
 ########################################################################################
 ### MEASUREMENT STORAGE
 ########################################################################################
@@ -78,14 +85,45 @@ class PowerMeasurements():
 ########################################################################################
 ### METER DATA HANDLER
 ########################################################################################
+# By default operates in Home Assistant MQTT Auto-Discovery mode. This can be disabled
+# by setting the 'ha' parameter to False.
+# If you also want to send the meter data to custom topics, provide the custom topics.
+#  - topic is the "frequently updated" data (every 5 seconds)
+#  - topic_avg is the "average per minute" data	
+# It is possible to use either HA or custom topics, or both.
 
 class MeterDataHandler():
-    def __init__(self, meter, mqttclient, topic, topic_avg):
+    def __init__(self, meter, name, mqttclient, ha=True, topic=None, topic_avg=None):
         self.meter = meter
+        self.name = name
         self.mqttclient = mqttclient
         self.topic = topic
         self.topic_avg = topic_avg
+        self.ha = ha
         self.minute_data = PowerMeasurements()
+
+        if self.ha:
+            self.ha_id = f"{self.name}_{self.meter.modbus_id()}"
+            self.ha_configtopic = f"homeassistant/sensor/{self.ha_id}/config"
+            self.ha_statetopic = f"homeassistant/sensor/{self.ha_id}/state"
+            self.publish_discovery()
+
+    def publish_discovery(self):
+        # Publish Home Assistant MQTT discovery messages
+
+        # First message contains all the details for the device, we send POWER data
+        discovery_payload = {
+            "state_topic": self.ha_statetopic,
+            "unit_of_measurement": "W",
+            "value_template": "{{ value_json.power }}",
+            "device": {
+            "identifiers": [f"{self.ha_id}"],
+            "name": self.meter.sys_metername().strip(),
+            "model": self.meter.sys_metermodel().strip(),
+            "manufacturer": self.meter.sys_manufacturer().strip()
+            }
+        }
+        self.mqttclient.publish(self.ha_configtopic, json.dumps(discovery_payload), qos=1, retain=True)
 
     def pushMeasurements(self):
         measurements = {}
@@ -96,105 +134,105 @@ class MeterDataHandler():
         ###################################################################
         # First phase is always supported
         value = self.meter.md_voltage_L1_N()
-        self.minute_data.add("voltage_L1_N", value)
-        measurements["voltage_L1_N"] = value
+        self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
+        measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
 
         # Add other metrics only for three-phase meters
         if self.meter.has_threephase():
             value = self.meter.md_voltage_L_L()
-            self.minute_data.add("voltage_L_L", value)
-            measurements["voltage_L_L"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L_L.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L_L.valuename] = value
 
             value = self.meter.md_voltage_L1_L2()
-            self.minute_data.add("voltage_L1_L2", value)
-            measurements["voltage_L1_L2"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L1_L2.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L1_L2.valuename] = value
 
             value = self.meter.md_voltage_L2_L3()
-            self.minute_data.add("voltage_L2_L3", value)
-            measurements["voltage_L2_L3"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L2_L3.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L2_L3.valuename] = value
 
             value = self.meter.md_voltage_L3_L1()
-            self.minute_data.add("voltage_L3_L1", value)
-            measurements["voltage_L3_L1"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L3_L1.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L3_L1.valuename] = value
 
             value = self.meter.md_voltage_L2_N()
-            self.minute_data.add("voltage_L2_N", value)
-            measurements["voltage_L2_N"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L2_N.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L2_N.valuename] = value
 
             value = self.meter.md_voltage_L3_N()
-            self.minute_data.add("voltage_L3_N", value)
-            measurements["voltage_L3_N"] = value
+            self.minute_data.add(MeasurementType.VOLTAGE_L3_N.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L3_N.valuename] = value
 
         ###################################################################
         # Power
         ###################################################################
         value = self.meter.md_power()
-        self.minute_data.add("power", value)
-        measurements["power"] = value
+        self.minute_data.add(MeasurementType.POWER.valuename, value)
+        measurements[MeasurementType.POWER.valuename] = value
 
         if self.meter.has_threephase():
             value = self.meter.md_power_L1()
-            self.minute_data.add("power_L1", value)
-            measurements["power_L1"] = value
+            self.minute_data.add(MeasurementType.POWER_L1.valuename, value)
+            measurements[MeasurementType.POWER_L1.valuename] = value
 
             value = self.meter.md_power_L2()
-            self.minute_data.add("power_L2", value)
-            measurements["power_L2"] = value
+            self.minute_data.add(MeasurementType.POWER_L2.valuename, value)
+            measurements[MeasurementType.POWER_L2.valuename] = value
 
             value = self.meter.md_power_L3()
-            self.minute_data.add("power_L3", value)
-            measurements["power_L3"] = value
+            self.minute_data.add(MeasurementType.POWER_L3.valuename, value)
+            measurements[MeasurementType.POWER_L3.valuename] = value
 
         ###################################################################
         # Currents
         ###################################################################
         value = self.meter.md_current()
-        self.minute_data.add("current", value)
-        measurements["current"] = value
+        self.minute_data.add(MeasurementType.CURRENT.valuename, value)
+        measurements[MeasurementType.CURRENT.valuename] = value
 
         if self.meter.has_threephase():
             value = self.meter.md_current_L1()
-            self.minute_data.add("current_L1", value)
-            measurements["current_L1"] = value
+            self.minute_data.add(MeasurementType.CURRENT_L1.valuename, value)
+            measurements[MeasurementType.CURRENT_L1.valuename] = value
 
             value = self.meter.md_current_L2()
-            self.minute_data.add("current_L2", value)
-            measurements["current_L2"] = value
+            self.minute_data.add(MeasurementType.CURRENT_L2.valuename, value)
+            measurements[MeasurementType.CURRENT_L2.valuename] = value
 
             value = self.meter.md_current_L3()
-            self.minute_data.add("current_L3", value)
-            measurements["current_L3"] = value
+            self.minute_data.add(MeasurementType.CURRENT_L3.valuename, value)
+            measurements[MeasurementType.CURRENT_L3.valuename] = value
 
         ###################################################################
         # Other
         ###################################################################
         value = self.meter.md_powerfactor()
-        self.minute_data.add("powerfactor", value)
-        measurements["powerfactor"] = value
+        self.minute_data.add(MeasurementType.POWER_FACTOR.valuename, value)
+        measurements[MeasurementType.POWER_FACTOR.valuename] = value
 
         value = self.meter.md_frequency()
-        self.minute_data.add("frequency", value)
-        measurements["frequency"] = value
+        self.minute_data.add(MeasurementType.FREQUENCY.valuename, value)
+        measurements[MeasurementType.FREQUENCY.valuename] = value
 
         ###################################################################
         # Totals
         ###################################################################
 
         value = self.meter.ed_total()
-        self.minute_data.set("total_active_in", value)
-        measurements["total_active_in"] = value
+        self.minute_data.set(MeasurementType.ENERGY_TOTAL.valuename, value)
+        measurements[MeasurementType.ENERGY_TOTAL.valuename] = value
 
         value = self.meter.ed_total_export()
-        self.minute_data.set("total_active_out", value)
-        measurements["total_active_out"] = value
+        self.minute_data.set(MeasurementType.ENERGY_TOTAL_EXPORT.valuename, value)
+        measurements[MeasurementType.ENERGY_TOTAL_EXPORT.valuename] = value
 
         value = self.meter.ed_total_reactive_import()
-        self.minute_data.set("total_reactive_in", value)
-        measurements["total_reactive_in"] = value
+        self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename, value)
+        measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename] = value
 
         value = self.meter.ed_total_reactive_export()
-        self.minute_data.set("total_reactive_out", value)
-        measurements["total_reactive_out"] = value
+        self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename, value)
+        measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
 
         # Convert to JSON
         jsondata = json.dumps(measurements)
@@ -291,31 +329,16 @@ def main():
     mqttclient.on_connect = mqtt_on_connect     # On connect handler
     connect_mqtt(mqttclient, logger)
 
-    # Initialize meters
-    meter1 = A9MEM3155.iMEM3155(master, 10)             # MODBUS ID = 10
-    meter2 = A9MEM2150.iMEM2150(master, 20)             # MODBUS ID = 20
-    meter3 = A9MEM2150.iMEM2150(master, 21)             # MODBUS ID = 21
-    meter4 = ECR140D.ECR140D(master, 25)                # MODBUS ID = 25
-    meter5 = ECR140D.ECR140D(master, 26)                # MODBUS ID = 26
- 
-    # Create meter data handlers
-    meterhandler1 = MeterDataHandler(meter1,mqttclient,PUBTOPIC1,PUBTOPIC1_AVG)
-    meters.append(meterhandler1)
-
-    meterhandler2 = MeterDataHandler(meter2,mqttclient,PUBTOPIC2,PUBTOPIC2_AVG)
-    meters.append(meterhandler2)
-
-    meterhandler3 = MeterDataHandler(meter3,mqttclient,PUBTOPIC3,PUBTOPIC3_AVG)
-    meters.append(meterhandler3)
-
-    meterhandler4 = MeterDataHandler(meter4,mqttclient,PUBTOPIC4,PUBTOPIC4_AVG)
-    meters.append(meterhandler4)
-
-    meterhandler5 = MeterDataHandler(meter5,mqttclient,PUBTOPIC5,PUBTOPIC5_AVG)
-    meters.append(meterhandler5)
+    # Initialize meters - parse the METER_CONFIG, instantiate per found meter the correct class and meterhandler
+    for meter_conf in METER_CONFIG:
+        meter_class = meter_classes[meter_conf["type"]]
+        meter = meter_class(master, meter_conf["modbus_id"])
+        ha = meter_conf.get("homeassistant", "false").lower() == "true"
+        meterhandler = MeterDataHandler(meter, meter_conf["name"], mqttclient, ha, meter_conf["custom_pub_topic"], meter_conf["custom_pub_topic_avg"])
+        meters.append(meterhandler)
 
     # Initialize recurring task, our 'loop' function
-    rt = repeatedtimer.RepeatedTimer(5, 5, loop_5s, meters)
+    rt = repeatedtimer.RepeatedTimer(0, 5, loop_5s, meters)
     rt.first_start()
 
     rt2 = repeatedtimer.RepeatedTimer(60, 60, loop_60s, meters)

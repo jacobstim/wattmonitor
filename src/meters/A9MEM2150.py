@@ -1,6 +1,8 @@
+from enum import Enum
 import modbus_tk.defines as cst
 from datetime import datetime
 import struct
+from .measurements import MeasurementType
 
 class iMEM2150:
     
@@ -35,6 +37,37 @@ class iMEM2150:
         return False
     def has_threephase(self):
         return False
+
+    # Retrieve Modbus ID
+    def modbus_id(self):
+        return self._address
+
+    def supported_measurements(self):
+        measurements = []
+        measurements.append(MeasurementType.VOLTAGE)
+        measurements.append(MeasurementType.CURRENT)
+        measurements.append(MeasurementType.POWER)
+        measurements.append(MeasurementType.POWER_REACTIVE)        
+        measurements.append(MeasurementType.POWER_APPARENT)
+        measurements.append(MeasurementType.POWER_FACTOR)
+        measurements.append(MeasurementType.FREQUENCY)
+        measurements.append(MeasurementType.ENERGY_TOTAL)
+        measurements.append(MeasurementType.ENERGY_TOTAL_EXPORT)
+        measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT)
+        measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT)
+        if self.has_L1():
+            measurements.append(MeasurementType.VOLTAGE_L1_N)
+            measurements.append(MeasurementType.POWER_L1)
+            measurements.append(MeasurementType.CURRENT_L1)
+        if self.has_L2():
+            measurements.append(MeasurementType.VOLTAGE_L2_N)
+            measurements.append(MeasurementType.POWER_L2)
+            measurements.append(MeasurementType.CURRENT_L2)
+        if self.has_L3():
+            measurements.append(MeasurementType.VOLTAGE_L3_N)
+            measurements.append(MeasurementType.POWER_L3)
+            measurements.append(MeasurementType.CURRENT_L3)
+        return measurements
 
 #################################################################################################
 ### SYSTEM functions
