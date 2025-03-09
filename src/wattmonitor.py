@@ -11,6 +11,7 @@ import json
 # Meters to use
 from meters import A9MEM3155
 from meters import A9MEM2150
+from meters import ECR140D
 
 ########################################################################################
 ### NETWORK CONFIGURATION
@@ -27,6 +28,10 @@ PUBTOPIC2="smarthome/energy/iem2150-airco1/data/sec"         # Publish here ever
 PUBTOPIC2_AVG="smarthome/energy/iem2150-airco1/data/min"     # Publish here every minute
 PUBTOPIC3="smarthome/energy/iem2150-airco2/data/sec"         # Publish here every second
 PUBTOPIC3_AVG="smarthome/energy/iem2150-airco2/data/min"     # Publish here every minute
+PUBTOPIC4="smarthome/energy/ecr140d-unit1/data/sec"          # Publish here every second
+PUBTOPIC4_AVG="smarthome/energy/ecr140d-unit1/data/min"      # Publish here every minute
+PUBTOPIC5="smarthome/energy/ecr140d-unit2/data/sec"          # Publish here every second
+PUBTOPIC5_AVG="smarthome/energy/ecr140d-unit2/data/min"      # Publish here every minute
  
 ########################################################################################
 ### MEASUREMENT STORAGE
@@ -278,6 +283,8 @@ def main():
     meter1 = A9MEM3155.iMEM3155(master, 10)             # MODBUS ID = 10
     meter2 = A9MEM2150.iMEM2150(master, 20)             # MODBUS ID = 20
     meter3 = A9MEM2150.iMEM2150(master, 21)             # MODBUS ID = 21
+    meter4 = ECR140D.ECR140D(master, 25)                # MODBUS ID = 25
+    meter5 = ECR140D.ECR140D(master, 26)                # MODBUS ID = 26
  
     # Create meter data handlers
     meterhandler1 = MeterDataHandler(meter1,mqttclient,PUBTOPIC1,PUBTOPIC1_AVG)
@@ -288,6 +295,12 @@ def main():
 
     meterhandler3 = MeterDataHandler(meter3,mqttclient,PUBTOPIC3,PUBTOPIC3_AVG)
     meters.append(meterhandler3)
+
+    meterhandler4 = MeterDataHandler(meter4,mqttclient,PUBTOPIC4,PUBTOPIC4_AVG)
+    meters.append(meterhandler4)
+
+    meterhandler5 = MeterDataHandler(meter5,mqttclient,PUBTOPIC5,PUBTOPIC5_AVG)
+    meters.append(meterhandler5)
 
     # Initialize recurring task, our 'loop' function
     rt = repeatedtimer.RepeatedTimer(1, 1, loop_1s, meters)

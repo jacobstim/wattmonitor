@@ -3,7 +3,7 @@ from modbus_tk import modbus_tcp
 import logging
 
 # Meters to use
-from meters import A9MEM2150
+from meters import ECR140D
 
 ########################################################################################
 ### NETWORK CONFIGURATION
@@ -27,7 +27,7 @@ except modbus_tk.modbus.ModbusError as exc:
     logging.error("%s - Code=%d", exc, exc.get_exception_code())
 
 # Initialize meters (Modbus Slave ID 21)
-meter1 = A9MEM2150.iMEM2150(master, 21)
+meter1 = ECR140D.ECR140D(master, 25)
 
 ### READ METER CHARACTERISTICS
 logging.info("\tQuerying Meter Information")
