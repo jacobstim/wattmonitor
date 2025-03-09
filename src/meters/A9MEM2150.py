@@ -55,7 +55,7 @@ class iMEM2150:
         measurements.append(MeasurementType.ENERGY_TOTAL_EXPORT)
         measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT)
         measurements.append(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT)
-        if self.has_L1():
+        if self.has_L1() and self.has_threephase():
             measurements.append(MeasurementType.VOLTAGE_L1_N)
             measurements.append(MeasurementType.POWER_L1)
             measurements.append(MeasurementType.CURRENT_L1)

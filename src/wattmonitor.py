@@ -16,22 +16,31 @@ from meters import A9MEM3155
 from meters import A9MEM2150
 from meters import ECR140D
 
-# Mapping between meter types and corresponding classes
-meter_classes = {
-    "A9MEM3155": A9MEM3155.iMEM3155,
-    "A9MEM2150": A9MEM2150.iMEM2150,
-    "ECR140D": ECR140D.ECR140D
-}
-
 ########################################################################################
-### NETWORK CONFIGURATION
+### CONFIGURATION
 ########################################################################################
 
+# Modbus TCP server to connect to
 MODBUS_SERVER = "172.16.0.60"
 MODBUS_PORT = 502
 
+# MQTT server to publish collected data to
 MQTT_SERVER = "mqtt.home.local"
 MQTT_PORT = 1883
+
+# Meter configuration
+# METER_CONFIG is a list of dictionaries, each dictionary contains the following keys:
+#  - type: the meter type (A9MEM3155, A9MEM2150, ECR140D)
+#  - modbus_id: the modbus ID of the meter
+#  - name: the friendly name of the meter (used mainly for Home Assistant)
+#  - homeassistant: whether to use Home Assistant MQTT Auto-Discovery (true/false)
+#       * This will publish the meter configuration to Home Assistant upon startup
+#       * The meter data is also published every minute to Home Assistant
+#       * Frequently updated meter data is never published to Home Assistant
+#  - custom_pub_topic: the custom topic to publish the "frequently updated" data
+#  - custom_pub_topic_avg: the custom topic to publish the "average per minute" data
+# It is possible to use either HA or custom topics, or both.
+# The custom topics are optional, if not provided, the meter data will not be published to custom topics.
 
 METER_CONFIG = [
     {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min"},
@@ -40,6 +49,17 @@ METER_CONFIG = [
     {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min"},
     {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min"}
 ]
+
+########################################################################################
+### MAPPINGS
+########################################################################################
+
+# Mapping between meter types and corresponding classes
+meter_classes = {
+    "A9MEM3155": A9MEM3155.iMEM3155,
+    "A9MEM2150": A9MEM2150.iMEM2150,
+    "ECR140D": ECR140D.ECR140D
+}
 
 ########################################################################################
 ### MEASUREMENT STORAGE
@@ -104,26 +124,33 @@ class MeterDataHandler():
 
         if self.ha:
             self.ha_id = f"{self.name}_{self.meter.modbus_id()}"
-            self.ha_configtopic = f"homeassistant/sensor/{self.ha_id}/config"
             self.ha_statetopic = f"homeassistant/sensor/{self.ha_id}/state"
             self.publish_discovery()
 
     def publish_discovery(self):
-        # Publish Home Assistant MQTT discovery messages
 
-        # First message contains all the details for the device, we send POWER data
-        discovery_payload = {
-            "state_topic": self.ha_statetopic,
-            "unit_of_measurement": "W",
-            "value_template": "{{ value_json.power }}",
-            "device": {
-            "identifiers": [f"{self.ha_id}"],
-            "name": self.meter.sys_metername().strip(),
-            "model": self.meter.sys_metermodel().strip(),
-            "manufacturer": self.meter.sys_manufacturer().strip()
+        # Publish Home Assistant MQTT discovery messages for each supported measurement
+        metername = self.meter.sys_metername().strip()
+        metermodel = self.meter.sys_metermodel().strip()
+        metermanufacturer = self.meter.sys_manufacturer().strip()
+
+        for measurement in self.meter.supported_measurements():
+            discovery_payload = {
+                "state_topic": self.ha_statetopic,
+                "unit_of_measurement": measurement.unit,
+                "value_template": f"{{{{ value_json.{measurement.valuename} }}}}",
+                "device": {
+                    "identifiers": [f"{self.ha_id}"],
+                    "name": metername,
+                    "model": metermodel,
+                    "manufacturer": metermanufacturer
+                },
+                "name": f"{self.name} {measurement.valuename}",
+                "unique_id": f"{self.ha_id}_{measurement.valuename}"
             }
-        }
-        self.mqttclient.publish(self.ha_configtopic, json.dumps(discovery_payload), qos=1, retain=True)
+            config_topic = f"homeassistant/sensor/{self.ha_id}/{measurement.valuename}/config"
+            logging.debug(f"Posting Home Assistant MQTT Self-Discovery to: {config_topic}")
+            self.mqttclient.publish(config_topic, json.dumps(discovery_payload), qos=1, retain=True)
 
     def pushMeasurements(self):
         measurements = {}
@@ -133,12 +160,16 @@ class MeterDataHandler():
         # Voltages
         ###################################################################
         # First phase is always supported
-        value = self.meter.md_voltage_L1_N()
-        self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
-        measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
+        value = self.meter.md_voltage()
+        self.minute_data.add(MeasurementType.VOLTAGE.valuename, value)
+        measurements[MeasurementType.VOLTAGE.valuename] = value
 
         # Add other metrics only for three-phase meters
         if self.meter.has_threephase():
+            value = self.meter.md_voltage_L1_N()
+            self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
+            measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
+
             value = self.meter.md_voltage_L_L()
             self.minute_data.add(MeasurementType.VOLTAGE_L_L.valuename, value)
             measurements[MeasurementType.VOLTAGE_L_L.valuename] = value
@@ -182,6 +213,14 @@ class MeterDataHandler():
             value = self.meter.md_power_L3()
             self.minute_data.add(MeasurementType.POWER_L3.valuename, value)
             measurements[MeasurementType.POWER_L3.valuename] = value
+
+        value = self.meter.md_power_reactive()
+        self.minute_data.add(MeasurementType.POWER_REACTIVE.valuename, value)
+        measurements[MeasurementType.POWER_REACTIVE.valuename] = value
+
+        value = self.meter.md_power_apparent()
+        self.minute_data.add(MeasurementType.POWER_APPARENT.valuename, value)
+        measurements[MeasurementType.POWER_APPARENT.valuename] = value
 
         ###################################################################
         # Currents
@@ -234,22 +273,31 @@ class MeterDataHandler():
         self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename, value)
         measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
 
-        # Convert to JSON
-        jsondata = json.dumps(measurements)
-        logging.debug("---- JSON Data (topic: " + self.topic + ") ----------------------------------------\n" + jsondata)
+        # If we are expected to publish to our separate topic, do so...
+        if self.topic:
+            # Convert to JSON
+            jsondata = json.dumps(measurements)
+            logging.debug("---- JSON Data (topic: " + self.topic + ") ----------------------------------------\n" + jsondata)
 
-        # Post to MQTT server
-        self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
-        
+            # Post to MQTT server
+            self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
+
     def pushAverageMeasurements(self):
          # Retrieve averages of past 60 minutes
         jsondata = self.minute_data.to_json()
-        logging.debug("---- Per minute data (topic: " + self.topic_avg + ") ---------------------------------\n" + jsondata)
+        logging.debug("Publishing minute averages...")
         # Post to MQTT server
-        self.mqttclient.publish(self.topic_avg, payload = jsondata, qos=1)
+        if self.topic_avg:
+            logging.debug("-> Published to: " + self.topic_avg)
+            self.mqttclient.publish(self.topic_avg, payload = jsondata, qos=1)
+        if self.ha:
+            # In case we need to publish to HA, also do that
+            logging.debug("-> Published to: " + self.ha_statetopic)
+            self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
+        if self.topic_avg or self.ha:
+            logging.debug("---- Per minute data (topic: " + self.topic_avg + ") ---------------------------------\n" + jsondata)
         # Clear and restart
         self.minute_data.clear()   
-
 
 ########################################################################################
 ### LOOP
