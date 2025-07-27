@@ -3,17 +3,17 @@ from datetime import datetime
 import struct
 import modbus_tk.defines as cst
 from .measurements import MeasurementType
+from .base_meter import BaseMeter
 
-class ECR140D:
+class ECR140D(BaseMeter):
     
     """
     This class implements the Hager ECR140D meter values
     """
 
     def __init__(self, modbus, address=1):
-        # Construct 
-        self._modbus = modbus
-        self._address = address
+        # Construct using the base meter
+        super().__init__(modbus, address)
 
 #    def __del__(self):
 #        self.close()
@@ -23,14 +23,6 @@ class ECR140D:
 #        if not self._is_opened:
 #            self._do_open()
 #            self._is_opened = True
-
-    # Retrieve Modbus ID
-    def modbus_id(self):
-        return self._address
-
-#################################################################################################
-### Module functions
-#################################################################################################
 
     # Phases support
     def has_L1(self):
@@ -158,14 +150,3 @@ class ECR140D:
         :return: Energy in kVARh (kVolt-Amper(Reactive)-hour)
         """
         return (self._readregister(0xB066, 2, '>I'))[0]
-
-
-#################################################################################################
-### Internal functions
-#################################################################################################
-
-    def _readregister(self, register, size, datatype=""):
-        if len(datatype)>0:
-            return self._modbus.execute(self._address, cst.READ_HOLDING_REGISTERS, register, size, data_format=datatype)
-        else:
-            return self._modbus.execute(self._address, cst.READ_HOLDING_REGISTERS, register, size)

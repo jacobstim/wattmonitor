@@ -3,13 +3,14 @@ import modbus_tk
 import modbus_tk.defines as cst
 from modbus_tk import modbus_tcp, hooks
 from time import sleep
-from repeatedtimer import repeatedtimer
 from datetime import datetime
 import logging
 import json
 import itertools
 from enum import Enum
 from meters.measurements import MeasurementType
+from modbus_coordinator import initialize_coordinator
+from single_thread_scheduler import SingleThreadScheduler
 
 # Meters to use
 from meters import A9MEM3155
@@ -31,7 +32,7 @@ MQTT_PORT = 1883
 
 # Meter configuration
 # METER_CONFIG is a list of dictionaries, each dictionary contains the following keys:
-#  - type: the meter type (A9MEM3155, A9MEM2150, ECR140D)
+#  - type: the meter type (A9MEM3155, A9MEM2150, ECR140D, CSMB)
 #  - modbus_id: the modbus ID of the meter
 #  - name: the friendly name of the meter (used mainly for Home Assistant)
 #  - homeassistant: whether to use Home Assistant MQTT Auto-Discovery (true/false)
@@ -40,16 +41,19 @@ MQTT_PORT = 1883
 #       * Frequently updated meter data is never published to Home Assistant
 #  - custom_pub_topic: the custom topic to publish the "frequently updated" data
 #  - custom_pub_topic_avg: the custom topic to publish the "average per minute" data
+#  - modbus_delay: delay in seconds after reading this meter (to prevent communication mix-ups)
+#       * Default: 0.05 (50ms) for most meters
+#       * CSMB: 0.15 (150ms) due to slower response times
 # It is possible to use either HA or custom topics, or both.
 # The custom topics are optional, if not provided, the meter data will not be published to custom topics.
 
 METER_CONFIG = [
-    {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min"},
-    {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min"},
-    {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min"},
-    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min"},
-    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min"},
-    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min"}
+    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min", "modbus_delay": 0.40},
+#    {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min", "modbus_delay": 0.05}
+#    {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min", "modbus_delay": 0.05},
+#    {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min", "modbus_delay": 0.05},
+    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min", "modbus_delay": 0.05},
+#    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min", "modbus_delay": 0.05},
 ]
 
 ########################################################################################
@@ -345,6 +349,16 @@ def loop_60s(meters):
     for meterhandler in meters:
         meterhandler.pushAverageMeasurements()
 
+# Monitor connections and reconnect if needed
+def monitor_connections(master, mqttclient, logger):
+    """Monitor Modbus and MQTT connections and reconnect if needed"""
+    if not master._is_opened:
+        logger.warning("Modbus connection lost. Attempting to reconnect...")
+        connect_modbus(master, logger)
+    if not mqttclient.is_connected():
+        logger.warning("MQTT connection lost. Attempting to reconnect...")
+        connect_mqtt(mqttclient, logger)
+
 ########################################################################################
 ### CALLBACKS
 ########################################################################################
@@ -396,6 +410,15 @@ def main():
         master = modbus_tcp.TcpMaster(host=MODBUS_SERVER, port=MODBUS_PORT)
         master.set_timeout(5.0)
         connect_modbus(master, logger)
+        
+        # Initialize the Modbus coordinator for thread-safe communication
+        coordinator = initialize_coordinator(master)
+        
+        # Set default inter-request delay
+        coordinator.set_inter_request_delay(0.05)  # 50ms default between requests
+        
+        # Apply TCP optimizations for better buffer management
+        coordinator.configure_tcp_optimizations()
 
     except modbus_tk.modbus.ModbusError as exc:
         logger.error("%s - Code=%d", exc, exc.get_exception_code())
@@ -406,36 +429,41 @@ def main():
     connect_mqtt(mqttclient, logger)
 
     # Initialize meters - parse the METER_CONFIG, instantiate per found meter the correct class and meterhandler
+    device_delays = {}  # Collect device-specific delays from configuration
+    
     for meter_conf in METER_CONFIG:
         meter_class = meter_classes[meter_conf["type"]]
         meter = meter_class(master, meter_conf["modbus_id"])
         ha = meter_conf.get("homeassistant", "false").lower() == "true"
         meterhandler = MeterDataHandler(meter, meter_conf["name"], mqttclient, ha, meter_conf["custom_pub_topic"], meter_conf["custom_pub_topic_avg"])
         meters.append(meterhandler)
+        
+        # Collect modbus delay configuration for this meter
+        modbus_delay = meter_conf.get("modbus_delay", 0.05)  # Default to 50ms if not specified
+        device_delays[meter_conf["modbus_id"]] = modbus_delay
+        logger.info(f"Configured meter {meter_conf['name']} (ID {meter_conf['modbus_id']}) with {modbus_delay*1000:.0f}ms delay")
+    
+    # Apply collected device delays to the coordinator
+    coordinator.configure_device_delays(device_delays)
+    #logger.info(f"Applied device-specific delays: {device_delays}")
 
-    # Initialize recurring task, our 'loop' function
-    rt = repeatedtimer.RepeatedTimer(0, 5, loop_5s, meters)
-    rt.first_start()
-
-    rt2 = repeatedtimer.RepeatedTimer(60, 60, loop_60s, meters)
-    rt2.first_start()
+    # Initialize single-threaded scheduler instead of multiple timers
+    scheduler = SingleThreadScheduler()
+    
+    # Add tasks to scheduler
+    scheduler.add_task("5_second_readings", 5.0, loop_5s, meters)
+    scheduler.add_task("60_second_averages", 60.0, loop_60s, meters)
+    scheduler.add_task("connection_monitor", 30.0, monitor_connections, master, mqttclient, logger)
 
     try:
-        while(True):
-            sleep(5)
-            if not master._is_opened:
-                logger.warning("Modbus connection lost. Attempting to reconnect...")
-                connect_modbus(master, logger)
-            if not mqttclient.is_connected():
-                logger.warning("MQTT connection lost. Attempting to reconnect...")
-                connect_mqtt(mqttclient, logger)
+        # Start the single-threaded scheduler - this blocks until stopped
+        scheduler.start()
 
     except KeyboardInterrupt:
         logging.info('Stopping program!')
 
     finally:
-        rt.stop()   # stop reading data
-        rt2.stop()  # stop reading data
+        scheduler.stop()  # stop the scheduler
         mqttclient.loop_stop()  # stop the mqtt loop
 
 ########################################################################################
