@@ -14,12 +14,12 @@ class ScheduledTask:
     
     def __init__(self, name: str, interval: float, func: Callable, *args, **kwargs):
         self.name = name
-        self.interval = interval
+        self.interval = timedelta(seconds=interval)
         self.func = func
         self.args = args
         self.kwargs = kwargs
-        self.next_run = datetime.now() + timedelta(seconds=interval)
-        self.last_run = None
+        self.last_run = datetime.now() - self.interval  # Start next run immediately
+        self.next_run = self.last_run 
         
     def should_run(self) -> bool:
         """Check if this task should run now"""
@@ -28,14 +28,13 @@ class ScheduledTask:
     def execute(self):
         """Execute the task and schedule next run"""
         try:
-            self.last_run = datetime.now()
+            self.last_run = self.last_run + self.interval  # We want to avoid drift because of the few ms that datetime.now() takes, so when we run, we assume this was properly triggered. 
+            self.next_run = self.last_run + self.interval  
             self.func(*self.args, **self.kwargs)
-            self.next_run = self.last_run + timedelta(seconds=self.interval)
             logging.debug(f"Task '{self.name}' executed successfully. Next run: {self.next_run}")
         except Exception as e:
+            # Next run is always scheduled after the last run, even on failure
             logging.error(f"Task '{self.name}' failed: {e}")
-            # Still schedule next run even on failure
-            self.next_run = datetime.now() + timedelta(seconds=self.interval)
 
 
 class SingleThreadScheduler:
