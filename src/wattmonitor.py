@@ -13,10 +13,7 @@ from modbus_coordinator import initialize_coordinator
 from single_thread_scheduler import SingleThreadScheduler
 
 # Meters to use
-from meters import A9MEM3155
-from meters import A9MEM2150
-from meters import ECR140D
-from meters import CSMB
+from meters import iMEM3155, iMEM2150, ECR140D, CSMB
 
 ########################################################################################
 ### CONFIGURATION
@@ -62,10 +59,10 @@ METER_CONFIG = [
 
 # Mapping between meter types and corresponding classes
 meter_classes = {
-    "A9MEM3155": A9MEM3155.iMEM3155,
-    "A9MEM2150": A9MEM2150.iMEM2150,
-    "ECR140D": ECR140D.ECR140D,
-    "CSMB" : CSMB.CSMB
+    "A9MEM3155": iMEM3155,
+    "A9MEM2150": iMEM2150,
+    "ECR140D": ECR140D,
+    "CSMB": CSMB
 }
 
 ########################################################################################

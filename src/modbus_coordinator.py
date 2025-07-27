@@ -6,21 +6,11 @@ while maintaining the modularity of individual meter definitions.
 
 import threading
 import logging
-from typing import Dict, List, Tuple, Any
-from datetime import datetime
+from typing import Dict, List, Tuple, Any, Union
 import time
 
-
-class ModbusRequest:
-    """Represents a single Modbus register read request"""
-    def __init__(self, meter_id: int, register: int, size: int, datatype: str = ""):
-        self.meter_id = meter_id
-        self.register = register
-        self.size = size
-        self.datatype = datatype
-        self.timestamp = datetime.now()
-        self.result = None
-        self.error = None
+# Import abstract data types
+from meters.data_types import DataType, RegisterConfig
 
 
 class ModbusCoordinator:
@@ -29,8 +19,9 @@ class ModbusCoordinator:
     Ensures all Modbus requests are executed sequentially in a single thread.
     """
     
-    def __init__(self, modbus_master):
+    def __init__(self, modbus_master, use_pymodbus=False):
         self.modbus_master = modbus_master
+        self.use_pymodbus = use_pymodbus  # Flag to choose between modbus_tk and pymodbus
         self._request_queue = []
         self._response_cache = {}  # Cache responses for a short time to avoid duplicate reads
         self._cache_timeout = 3.0  # Cache responses for 3 seconds
@@ -46,99 +37,182 @@ class ModbusCoordinator:
         self._last_request_time = 0
         self._retry_attempts = 3  # Number of retry attempts for failed requests
         
-    def read_registers(self, meter_id: int, register: int, size: int, datatype: str = "") -> Any:
+    def read_register_config(self, meter_id: int, config: RegisterConfig) -> Any:
         """
-        Read Modbus registers for a specific meter.
-        This method is thread-safe and caches recent responses.
+        Read Modbus registers using abstract data type configuration.
+        This is the preferred method for new meter implementations.
         
         Args:
             meter_id: Modbus slave ID of the meter
-            register: Starting register address
-            size: Number of registers to read
-            datatype: Data format string for modbus_tk
+            config: RegisterConfig specifying what and how to read
             
         Returns:
-            Register data or raises exception on error
+            Decoded register data according to the specified data type
         """
-        # Create cache key
-        cache_key = (meter_id, register, size, datatype)
+        cache_key = (meter_id, config.register, config.count, config.data_type.value)
         
         with self._lock:
-            # Check if we have a recent cached response
+            # Check cache first
             if cache_key in self._response_cache:
                 cached_result, timestamp = self._response_cache[cache_key]
                 if time.time() - timestamp < self._cache_timeout:
-                    self._logger.debug(f"Cache hit for meter {meter_id}, register {register}")
+                    self._logger.debug(f"Cache hit for meter {meter_id}, register {config.register}")
                     return cached_result
                 else:
-                    # Remove expired cache entry
                     del self._response_cache[cache_key]
             
-            # Implement inter-request delay to prevent communication mix-ups
+            # Implement inter-request delay
             self._wait_for_bus_ready(meter_id)
             
-            # Retry logic for failed requests
+            # Retry logic
             last_exception = None
             for attempt in range(self._retry_attempts):
                 try:
-                    # Execute the Modbus request
-                    import modbus_tk.defines as cst
+                    self._logger.debug(f"Reading meter {meter_id}, register 0x{config.register:04X}, size {config.count}, type {config.data_type.value} (attempt {attempt + 1})")
                     
-                    self._logger.debug(f"Reading meter {meter_id}, register 0x{register:04X}, size {size} (attempt {attempt + 1})")
+                    # Execute the Modbus read using the configured implementation
+                    result = self._execute_modbus_read(meter_id, config.register, config.count)
                     
-                    if datatype:
-                        result = self.modbus_master.execute(
-                            meter_id, cst.READ_HOLDING_REGISTERS, register, quantity_of_x=size, expected_length=size, data_format=datatype
-                        )
-                    else:
-                        result = self.modbus_master.execute(
-                            meter_id, cst.READ_HOLDING_REGISTERS, register, quantity_of_x=size, expected_length=size
-                        )
-                    
-                    # Validate the response - check if we got a reasonable result
+                    # Validate response
                     if result is None:
                         raise Exception("Received null response")
-                    
-                    # Additional validation: check if result is empty or invalid
                     elif hasattr(result, '__len__') and len(result) == 0:
                         raise Exception("Received empty response")
                     
-                    # Only cache the result if we've successfully validated it
-                    else:
-                         # Cache the result with current timestamp
-                        self._logger.debug(f"Caching result for meter {meter_id}, register 0x{register:04X}, value: {result}")
-                        self._response_cache[cache_key] = (result, time.time())
-                        self._last_request_time = time.time()
+                    # Convert to abstract data type
+                    converted_result = self._convert_to_datatype(result, config)
                     
-                    #self._logger.debug(f"Successfully read meter {meter_id}, register 0x{register:04X}: {len(result) if hasattr(result, '__len__') else 'scalar'} values")
-                    return result
+                    # Cache successful result
+                    self._response_cache[cache_key] = (converted_result, time.time())
+                    self._last_request_time = time.time()
+                    
+                    return converted_result
                     
                 except Exception as e:
                     last_exception = e
                     error_msg = str(e)
                                         
-                    # Check for specific error conditions that indicate communication mix-ups
+                    # Check for specific error conditions
                     if "Invalid unit id" in error_msg:
-                        self._logger.warning(f"Communication mix-up detected for meter {meter_id}, register 0x{register:04X} (attempt {attempt + 1}): {e}")                       
-                        # Clear any potentially corrupted cache entries for this meter
+                        self._logger.warning(f"Communication mix-up detected for meter {meter_id}, register 0x{config.register:04X} (attempt {attempt + 1}): {e}")                       
                         self._clear_cache_for_meter(meter_id)
-                        # Extended delay for mix-up recovery
                         time.sleep(0.3)
-
                     elif "Exception code = 11" in error_msg:
-                        self._logger.warning(f"Communication timeout for meter {meter_id}, register 0x{register:04X} (attempt {attempt + 1}): {e}")                       
-                        
+                        self._logger.warning(f"Communication timeout for meter {meter_id}, register 0x{config.register:04X} (attempt {attempt + 1}): {e}")                       
                     else:
-                        self._logger.warning(f"Modbus read failed for meter {meter_id}, register 0x{register:04X} (attempt {attempt + 1}): {e}")
+                        self._logger.warning(f"Modbus read failed for meter {meter_id}, register 0x{config.register:04X} (attempt {attempt + 1}): {e}")
                     
                     if attempt < self._retry_attempts - 1:
-                        # Wait before retry, with exponential backoff
                         retry_delay = 0.1 * (2 ** attempt)
                         time.sleep(retry_delay)
             
-            # All retry attempts failed
-            self._logger.error(f"All {self._retry_attempts} attempts failed for meter {meter_id}, register 0x{register:04X}: {last_exception}")
+            # All attempts failed
+            self._logger.error(f"All {self._retry_attempts} attempts failed for meter {meter_id}, register 0x{config.register:04X}: {last_exception}")
             raise last_exception
+    
+    def _execute_modbus_read(self, meter_id: int, register: int, count: int) -> List[int]:
+        """
+        Execute a Modbus holding register read using the configured implementation.
+        
+        Args:
+            meter_id: Modbus slave ID
+            register: Starting register address
+            count: Number of registers to read
+            
+        Returns:
+            List of register values
+        """
+        if self.use_pymodbus:
+            return self._execute_modbus_read_pymodbus(meter_id, register, count)
+        else:
+            return self._execute_modbus_read_modbus_tk(meter_id, register, count)
+    
+    def _execute_modbus_read_modbus_tk(self, meter_id: int, register: int, count: int) -> List[int]:
+        """Execute Modbus read using modbus_tk library"""
+        import modbus_tk.defines as cst
+        
+        result = self.modbus_master.execute(
+            meter_id, cst.READ_HOLDING_REGISTERS, register, 
+            quantity_of_x=count, expected_length=count
+        )
+        return result
+    
+    def _execute_modbus_read_pymodbus(self, meter_id: int, register: int, count: int) -> List[int]:
+        """Execute Modbus read using pymodbus library"""
+        # Note: This implementation assumes self.modbus_master is a pymodbus client
+        # For pymodbus, the client interface is different
+        
+        response = self.modbus_master.read_holding_registers(
+            address=register,
+            count=count,
+            slave=meter_id
+        )
+        
+        # Check for pymodbus exceptions
+        if response.isError():
+            raise Exception(f"Pymodbus error: {response}")
+        
+        # Return the register values
+        return response.registers
+    
+    def _convert_to_datatype(self, raw_registers: List[int], config: RegisterConfig) -> Any:
+        """Convert raw register values to the specified abstract data type"""
+        import struct
+        
+        if config.data_type == DataType.RAW_REGISTERS:
+            return raw_registers
+        
+        # Handle string conversion
+        if config.data_type == DataType.STRING:
+            # Convert registers to string (each register = 2 bytes)
+            byte_data = b''.join(struct.pack('>H', reg) for reg in raw_registers)
+            # Remove null bytes and decode
+            return byte_data.replace(b'\x00', b'').decode('ascii', errors='ignore').strip()
+        
+        # For numeric types, pack registers into bytes first
+        if len(raw_registers) == 1:
+            # Single register
+            byte_data = struct.pack('>H', raw_registers[0])
+        elif len(raw_registers) == 2:
+            # Two registers - handle endianness
+            if config.word_order == "big":
+                byte_data = struct.pack('>HH', raw_registers[0], raw_registers[1])
+            else:
+                byte_data = struct.pack('>HH', raw_registers[1], raw_registers[0])
+        elif len(raw_registers) == 4:
+            # Four registers for 64-bit values
+            if config.word_order == "big":
+                byte_data = struct.pack('>HHHH', *raw_registers)
+            else:
+                byte_data = struct.pack('>HHHH', *reversed(raw_registers))
+        else:
+            raise ValueError(f"Unsupported register count for {config.data_type}: {len(raw_registers)}")
+        
+        # Convert based on data type
+        try:
+            if config.data_type == DataType.UINT16:
+                return struct.unpack('>H', byte_data)[0]
+            elif config.data_type == DataType.INT16:
+                return struct.unpack('>h', byte_data)[0]
+            elif config.data_type == DataType.UINT32:
+                return struct.unpack('>I', byte_data)[0]
+            elif config.data_type == DataType.INT32:
+                return struct.unpack('>i', byte_data)[0]
+            elif config.data_type == DataType.UINT64:
+                return struct.unpack('>Q', byte_data)[0]
+            elif config.data_type == DataType.INT64:
+                return struct.unpack('>q', byte_data)[0]
+            elif config.data_type == DataType.FLOAT32:
+                return struct.unpack('>f', byte_data)[0]
+            elif config.data_type == DataType.FLOAT64:
+                return struct.unpack('>d', byte_data)[0]
+            else:
+                raise ValueError(f"Unknown data type: {config.data_type}")
+                
+        except struct.error as e:
+            self._logger.error(f"Failed to convert registers {raw_registers} to {config.data_type}: {e}")
+            # Fallback to raw registers
+            return raw_registers
     
     def cleanup_cache(self):
         """Remove expired cache entries"""
@@ -218,8 +292,8 @@ def get_coordinator():
     global _coordinator
     return _coordinator
 
-def initialize_coordinator(modbus_master):
+def initialize_coordinator(modbus_master, use_pymodbus=False):
     """Initialize the global Modbus coordinator"""
     global _coordinator
-    _coordinator = ModbusCoordinator(modbus_master)
+    _coordinator = ModbusCoordinator(modbus_master, use_pymodbus)
     return _coordinator

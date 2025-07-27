@@ -2,8 +2,8 @@
 Base meter class that uses the centralized Modbus coordinator
 """
 
-import modbus_tk.defines as cst
 from modbus_coordinator import get_coordinator
+from .data_types import RegisterConfig
 
 
 class BaseMeter:
@@ -20,12 +20,18 @@ class BaseMeter:
     def modbus_id(self):
         return self._address
     
-    def _readregister(self, register, size, datatype=""):
+    def _read_register_config(self, config: RegisterConfig):
         """
-        Read Modbus registers using the centralized coordinator.
-        This method is thread-safe and replaces direct modbus access.
+        Preferred method: Read Modbus registers using abstract data type configuration.
+        This method provides type safety and cleaner abstraction.
+        
+        Args:
+            config: RegisterConfig specifying register address, count, and data type
+            
+        Returns:
+            Decoded value according to the specified data type
         """
         if self._coordinator is None:
             raise RuntimeError("Modbus coordinator not initialized. Call initialize_coordinator() first.")
             
-        return self._coordinator.read_registers(self._address, register, size, datatype)
+        return self._coordinator.read_register_config(self._address, config)

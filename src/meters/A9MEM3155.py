@@ -1,28 +1,63 @@
 from enum import Enum
-import modbus_tk.defines as cst
 from datetime import datetime
 import struct
 from .measurements import MeasurementType
 from .base_meter import BaseMeter
+from .data_types import DataType, RegisterConfig
 
 class iMEM3155(BaseMeter):
     
     """
     This class implements the Schneider Electric iM3155 meter values
     """
+    
+    # Register configuration constants for better maintainability
+    REGISTER_CONFIGS = {
+        # System registers
+        'metername': RegisterConfig(0x001D, 20, DataType.STRING),
+        'metermodel': RegisterConfig(0x0031, 20, DataType.STRING),
+        'manufacturer': RegisterConfig(0x0045, 20, DataType.STRING),
+        'serialnumber': RegisterConfig(0x0081, 2, DataType.UINT32),
+        'manufacturedate': RegisterConfig(0x0083, 4, DataType.STRING),
+        
+        # Current measurement registers
+        'current_l1': RegisterConfig(0x0BB7, 2, DataType.FLOAT32),
+        'current_l2': RegisterConfig(0x0BB9, 2, DataType.FLOAT32),
+        'current_l3': RegisterConfig(0x0BBB, 2, DataType.FLOAT32),
+        'current_avg': RegisterConfig(0x0BC1, 2, DataType.FLOAT32),
+        
+        # Voltage measurement registers (line-to-line)
+        'voltage_l1_l2': RegisterConfig(0x0BCB, 2, DataType.FLOAT32),
+        'voltage_l2_l3': RegisterConfig(0x0BCD, 2, DataType.FLOAT32),
+        'voltage_l3_l1': RegisterConfig(0x0BCF, 2, DataType.FLOAT32),
+        'voltage_l_l_avg': RegisterConfig(0x0BD1, 2, DataType.FLOAT32),
+        
+        # Voltage measurement registers (line-to-neutral)
+        'voltage_l1_n': RegisterConfig(0x0BD3, 2, DataType.FLOAT32),
+        'voltage_l2_n': RegisterConfig(0x0BD5, 2, DataType.FLOAT32),
+        'voltage_l3_n': RegisterConfig(0x0BD7, 2, DataType.FLOAT32),
+        'voltage_l_n_avg': RegisterConfig(0x0BDB, 2, DataType.FLOAT32),
+        
+        # Power measurement registers
+        'power_l1': RegisterConfig(0x0BED, 2, DataType.FLOAT32),
+        'power_l2': RegisterConfig(0x0BEF, 2, DataType.FLOAT32),
+        'power_l3': RegisterConfig(0x0BF1, 2, DataType.FLOAT32),
+        'power_total': RegisterConfig(0x0BF3, 2, DataType.FLOAT32),
+        'power_reactive': RegisterConfig(0x0BFB, 2, DataType.FLOAT32),
+        'power_apparent': RegisterConfig(0x0C03, 2, DataType.FLOAT32),
+        'power_factor': RegisterConfig(0x0C0B, 2, DataType.FLOAT32),
+        'frequency': RegisterConfig(0x0C25, 2, DataType.FLOAT32),
+        
+        # Energy registers
+        'energy_total': RegisterConfig(0xB02B, 2, DataType.FLOAT32),
+        'energy_export': RegisterConfig(0xB02D, 2, DataType.FLOAT32),
+        'energy_reactive_import': RegisterConfig(0xB02F, 2, DataType.FLOAT32),
+        'energy_reactive_export': RegisterConfig(0xB031, 2, DataType.FLOAT32),
+    }
 
     def __init__(self, modbus, address=1):
         # Construct using the base meter
         super().__init__(modbus, address)
-
-#    def __del__(self):
-#        self.close()
-
-#    def open(self):
-#        """open the communication with the slave"""
-#        if not self._is_opened:
-#            self._do_open()
-#            self._is_opened = True
 
     # Phases support
     def has_L1(self):
@@ -71,19 +106,16 @@ class iMEM3155(BaseMeter):
 #################################################################################################
 
     def sys_metername(self):
-        result = self._readregister(0x001D, 20)
-        return ''.join(map(chr, struct.pack('>' + 'H' * len(result), *result)))
+        return self._read_register_config(self.REGISTER_CONFIGS['metername'])
 
     def sys_metermodel(self):
-        result = self._readregister(0x0031, 20)
-        return ''.join(map(chr, struct.pack('>' + 'H' * len(result), *result)))
+        return self._read_register_config(self.REGISTER_CONFIGS['metermodel'])
 
     def sys_manufacturer(self):
-        result = self._readregister(0x0045, 20)
-        return ''.join(map(chr, struct.pack('>' + 'H' * len(result), *result)))
+        return self._read_register_config(self.REGISTER_CONFIGS['manufacturer'])
 
     def sys_serialnumber(self):
-        return self._readregister(0x0081, 2, '>L')[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['serialnumber'])
 
     def sys_manufacturedate(self):
         """
@@ -91,7 +123,7 @@ class iMEM3155(BaseMeter):
 
         :return: Manufacturing date of the energy meter as a datetime object
         """
-        mdate = self._readregister(0x0083, 4, '>HHHH')
+        mdate = self._read_register_config(self.REGISTER_CONFIGS['manufacturedate'])
         return self._decodetime(mdate)
 
 #################################################################################################
@@ -99,40 +131,40 @@ class iMEM3155(BaseMeter):
 #################################################################################################
 
     def md_current_L1(self):
-        return (self._readregister(0x0BB7, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['current_l1'])
 
     def md_current_L2(self):
-        return (self._readregister(0x0BB9, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['current_l2'])
 
     def md_current_L3(self):
-        return (self._readregister(0x0BBB, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['current_l3'])
 
     def md_current(self):           # Average current
-        return (self._readregister(0x0BC1, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['current_avg'])
 
     def md_voltage_L1_L2(self):
-        return (self._readregister(0x0BCB, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l1_l2'])
 
     def md_voltage_L2_L3(self):
-        return (self._readregister(0x0BCD, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l2_l3'])
 
     def md_voltage_L3_L1(self):
-        return (self._readregister(0x0BCF, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l3_l1'])
 
     def md_voltage_L_L(self):
-        return (self._readregister(0x0BD1, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l_l_avg'])
 
     def md_voltage_L1_N(self):
-        return (self._readregister(0x0BD3, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l1_n'])
 
     def md_voltage_L2_N(self):
-        return (self._readregister(0x0BD5, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l2_n'])
 
     def md_voltage_L3_N(self):
-        return (self._readregister(0x0BD7, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l3_n'])
 
     def md_voltage(self):   # Average L-N voltage
-        return (self._readregister(0x0BDB, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['voltage_l_n_avg'])
 
     def md_power_L1(self):
         """
@@ -140,7 +172,7 @@ class iMEM3155(BaseMeter):
 
         :return: Power usage in W (Watts)
         """
-        return (self._readregister(0x0BED, 2, '>f'))[0]*1000
+        return self._read_register_config(self.REGISTER_CONFIGS['power_l1']) * 1000
 
     def md_power_L2(self):
         """
@@ -148,7 +180,7 @@ class iMEM3155(BaseMeter):
 
         :return: Power usage in W (Watts)
         """
-        return (self._readregister(0x0BEF, 2, '>f'))[0]*1000
+        return self._read_register_config(self.REGISTER_CONFIGS['power_l2']) * 1000
 
     def md_power_L3(self):
         """
@@ -156,7 +188,7 @@ class iMEM3155(BaseMeter):
 
         :return: Power usage in W (Watts)
         """
-        return (self._readregister(0x0BF1, 2, '>f'))[0]*1000
+        return self._read_register_config(self.REGISTER_CONFIGS['power_l3']) * 1000
 
     def md_power(self):
         """
@@ -164,16 +196,16 @@ class iMEM3155(BaseMeter):
 
         :return: Power usage in W (Watts)
         """
-        return (self._readregister(0x0BF3, 2, '>f'))[0]*1000
+        return self._read_register_config(self.REGISTER_CONFIGS['power_total']) * 1000
 
     def md_power_reactive(self):    # Not applicable for iEM3150 / iEM3250 / iEM3350
-        return (self._readregister(0x0BFB, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['power_reactive'])
 
     def md_power_apparent(self):    # Not applicable for iEM3150 / iEM3250 / iEM3350
-        return (self._readregister(0x0C03, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['power_apparent'])
 
     def md_powerfactor(self):
-        return (self._readregister(0x0C0B, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['power_factor'])
 
     def md_frequency(self):
         """
@@ -181,7 +213,7 @@ class iMEM3155(BaseMeter):
 
         :return: Frequency in Hz (Hertz)
         """
-        return (self._readregister(0x0C25, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['frequency'])
 
 #################################################################################################
 ### ENERGY DATA functions
@@ -193,7 +225,7 @@ class iMEM3155(BaseMeter):
 
         :return: Energy in kWh (kWatt-hour)
         """
-        return (self._readregister(0xB02B, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['energy_total'])
 
     def ed_total_export(self):              # Not applicable for iEM3150 / iEM3250 / iEM3350
         """
@@ -201,7 +233,7 @@ class iMEM3155(BaseMeter):
 
         :return: Energy in kWh (kWatt-hour)
         """
-        return (self._readregister(0xB02D, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['energy_export'])
 
     def ed_total_reactive_import(self):     # Not applicable for iEM3150 / iEM3250 / iEM3350
         """
@@ -209,7 +241,7 @@ class iMEM3155(BaseMeter):
 
         :return: Energy in kVARh (kVolt-Amper(Reactive)-hour)
         """
-        return (self._readregister(0xB02F, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['energy_reactive_import'])
 
     def ed_total_reactive_export(self):     # Not applicable for iEM3150 / iEM3250 / iEM3350
         """
@@ -217,7 +249,7 @@ class iMEM3155(BaseMeter):
 
         :return: Energy in kVARh (kVolt-Amper(Reactive)-hour)
         """
-        return (self._readregister(0xB031, 2, '>f'))[0]
+        return self._read_register_config(self.REGISTER_CONFIGS['energy_reactive_export'])
 
     def _decodetime(self, timestamp):
         """
