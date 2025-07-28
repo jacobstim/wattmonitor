@@ -71,12 +71,10 @@ meter_classes = {
 ########################################################################################
 
 class PowerMeasurements():
-    # We store in the dictionary:
-    # * key = measurement name
-    # * value = tuple (count, totalvalue)
-    valuestore = {}
-
     def __init__(self):
+        # We store in the dictionary:
+        # * key = measurement name
+        # * value = tuple (count, totalvalue)
         self.valuestore = {}
 
     def clear(self):
@@ -86,7 +84,16 @@ class PowerMeasurements():
         if not(index in self.valuestore.keys()):
             self.valuestore[index] = [0, 0]
         self.valuestore[index][0] += 1
-        self.valuestore[index][1] += value
+        try:
+            self.valuestore[index][1] += value
+        except TypeError as e:
+            # Add debugging information to help track down the source of the error
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"TypeError in PowerMeasurements.add(): index='{index}', value={value} (type: {type(value)}), error: {e}")
+            logger.error(f"Current valuestore[{index}] = {self.valuestore[index]}")
+            logger.error(f"Trying to add {type(value)} to {type(self.valuestore[index][1])}")
+            raise
 
     def set(self, index, value):
         self.valuestore[index] = [1, value]
@@ -159,6 +166,14 @@ class MeterDataHandler():
     def pushMeasurements(self):
         measurements = {}
         measurements["timestamp"] = datetime.now().isoformat()
+
+        # Perform batch reads first to populate cache for all subsequent individual reads
+        # This dramatically reduces Modbus communication overhead
+        try:
+            batch_measurements = self.meter.read_all_measurements()
+            logging.debug(f"Batch read completed for {self.name}: {len(batch_measurements)} measurements cached")
+        except Exception as e:
+            logging.warning(f"Batch read failed for {self.name}, falling back to individual reads: {e}")
 
         supported_measurements = self.meter.supported_measurements()
 
@@ -436,7 +451,7 @@ def main():
     scheduler = SingleThreadScheduler()
     
     # Add tasks to scheduler
-    scheduler.add_task("fast_readings", 3, loop_fast, meters)
+    scheduler.add_task("fast_readings", 2, loop_fast, meters)
     scheduler.add_task("compute_averages", 60.0, loop_slow, meters)
     scheduler.add_task("connection_monitor", 30.0, monitor_connections, master, mqttclient, logger)
 

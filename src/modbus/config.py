@@ -33,14 +33,6 @@ def setup_modbus_logging(level: int = logging.INFO) -> None:
     logger = logging.getLogger('modbus')
     logger.setLevel(level)
     
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
 
 def validate_modbus_config(config: ModbusConfig) -> bool:
     """

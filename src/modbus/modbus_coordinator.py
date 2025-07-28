@@ -6,11 +6,12 @@ while maintaining the modularity of individual meter definitions.
 
 import threading
 import logging
-from typing import Dict, List, Tuple, Any, Union
+from typing import Dict, List, Tuple, Any
 import time
 
 # Import abstract data types
-from meters.data_types import DataType, RegisterConfig
+from meters.data_types import DataType, RegisterConfig, BatchRegisterConfig, BatchReadResult
+from meters.measurements import MeasurementType
 # Import the new modbus abstraction layer
 from . import ModbusClientInterface, ModbusException
 
@@ -107,6 +108,101 @@ class ModbusCoordinator:
             # All attempts failed
             self._logger.error(f"All {self._retry_attempts} attempts failed for meter {meter_id}, register 0x{config.register:04X}: {last_exception}")
             raise last_exception
+
+    def read_batch_registers(self, meter_id: int, batch_config: BatchRegisterConfig, register_configs: Dict[MeasurementType, RegisterConfig]) -> BatchReadResult:
+        """
+        Read a batch of Modbus registers in a single operation for efficiency.
+        
+        Args:
+            meter_id: Modbus slave ID of the meter
+            batch_config: BatchRegisterConfig specifying the contiguous range to read
+            register_configs: Dictionary mapping measurement names to their RegisterConfig
+            
+        Returns:
+            BatchReadResult containing the raw data and methods to extract individual measurements
+        """
+        cache_key = f"batch_{meter_id}_{batch_config.start_register}_{batch_config.total_count}"
+        
+        with self._lock:
+            # Check cache first
+            if cache_key in self._response_cache:
+                cached_result, timestamp = self._response_cache[cache_key]
+                if time.time() - timestamp < self._cache_timeout:
+                    self._logger.debug(f"Batch cache hit for meter {meter_id}, registers {batch_config.start_register}-{batch_config.start_register + batch_config.total_count - 1}")
+                    return cached_result
+                else:
+                    del self._response_cache[cache_key]
+            
+            # Implement inter-request delay
+            self._wait_for_bus_ready(meter_id)
+            
+            # Retry logic
+            last_exception = None
+            for attempt in range(self._retry_attempts):
+                try:
+                    self._logger.debug(f"Batch reading meter {meter_id}, registers 0x{batch_config.start_register:04X}-0x{batch_config.start_register + batch_config.total_count - 1:04X} ({batch_config.description}) (attempt {attempt + 1})")
+                    
+                    # Execute the Modbus read using the configured implementation
+                    result = self._execute_modbus_read(meter_id, batch_config.start_register, batch_config.total_count)
+                    
+                    # Validate response
+                    if result is None:
+                        raise Exception("Received null response")
+                    elif hasattr(result, '__len__') and len(result) != batch_config.total_count:
+                        raise Exception(f"Expected {batch_config.total_count} registers, got {len(result)}")
+                    
+                    # Create batch result
+                    batch_result = BatchReadResult(result, batch_config, register_configs)
+                    
+                    # Cache successful result
+                    self._response_cache[cache_key] = (batch_result, time.time())
+                    self._last_request_time = time.time()
+                    
+                    # Also cache individual measurements to avoid redundant reads
+                    self._cache_individual_measurements_from_batch(meter_id, batch_result)
+                    
+                    return batch_result
+                    
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e)
+                                        
+                    # Check for specific error conditions
+                    if "Invalid unit id" in error_msg:
+                        self._logger.warning(f"Communication mix-up detected for meter {meter_id}, batch read (attempt {attempt + 1}): {e}")                       
+                        self._clear_cache_for_meter(meter_id)
+                        time.sleep(0.3)
+                    elif "Exception code = 11" in error_msg:
+                        self._logger.warning(f"Communication timeout for meter {meter_id}, batch read (attempt {attempt + 1}): {e}")                       
+                    else:
+                        self._logger.warning(f"Modbus batch read failed for meter {meter_id} (attempt {attempt + 1}): {e}")
+                    
+                    if attempt < self._retry_attempts - 1:
+                        retry_delay = 0.1 * (2 ** attempt)
+                        time.sleep(retry_delay)
+            
+            # All attempts failed
+            self._logger.error(f"All {self._retry_attempts} attempts failed for meter {meter_id}, batch read: {last_exception}")
+            raise last_exception
+    
+    def _cache_individual_measurements_from_batch(self, meter_id: int, batch_result: BatchReadResult):
+        """Cache individual measurement values from a batch read to avoid redundant individual reads"""
+        timestamp = time.time()
+        
+        for measurement_name in batch_result.batch_config.measurements:
+            # Find corresponding register config
+            if measurement_name in batch_result.register_configs:
+                config = batch_result.register_configs[measurement_name]
+                cache_key = (meter_id, config.register, config.count, config.data_type.value)
+                
+                # Extract and cache the individual measurement
+                try:
+                    value = batch_result.get_measurement(measurement_name)
+                    self._response_cache[cache_key] = (value, timestamp)
+                    self._logger.debug(f"Cached individual measurement {measurement_name.value} from batch read")
+                except Exception as e:
+                    self._logger.warning(f"Failed to cache individual measurement {measurement_name.value} from batch: {e}")
+    
     
     def _execute_modbus_read(self, meter_id: int, register: int, count: int) -> List[int]:
         """

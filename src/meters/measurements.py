@@ -25,6 +25,14 @@ class MeasurementType(Enum):
     ENERGY_TOTAL_EXPORT = "total_active_out"
     ENERGY_TOTAL_REACTIVE_IMPORT = "total_reactive_in"
     ENERGY_TOTAL_REACTIVE_EXPORT = "total_reactive_out"
+    # Device information measurements
+    METER_NAME = "metername"
+    METER_MODEL = "metermodel"
+    MANUFACTURER = "manufacturer"
+    SERIAL_NUMBER = "serialnumber"
+    MANUFACTURE_DATE = "manufacturedate"
+    # Legacy power measurement
+    POWER_TOTAL = "power_total"
 
     @property
     def unit(self):
@@ -53,6 +61,14 @@ class MeasurementType(Enum):
             MeasurementType.CURRENT_L1: "A",
             MeasurementType.CURRENT_L2: "A",
             MeasurementType.CURRENT_L3: "A",
+            # Device information - no units
+            MeasurementType.METER_NAME: "",
+            MeasurementType.METER_MODEL: "",
+            MeasurementType.MANUFACTURER: "",
+            MeasurementType.SERIAL_NUMBER: "",
+            MeasurementType.MANUFACTURE_DATE: "",
+            # Legacy power measurement
+            MeasurementType.POWER_TOTAL: "W",
         }[self]
 
     @property
@@ -82,4 +98,12 @@ class MeasurementType(Enum):
             MeasurementType.CURRENT_L1: "current_L1",
             MeasurementType.CURRENT_L2: "current_L2",
             MeasurementType.CURRENT_L3: "current_L3",
+            # Device information
+            MeasurementType.METER_NAME: "metername",
+            MeasurementType.METER_MODEL: "metermodel",
+            MeasurementType.MANUFACTURER: "manufacturer",
+            MeasurementType.SERIAL_NUMBER: "serialnumber",
+            MeasurementType.MANUFACTURE_DATE: "manufacturedate",
+            # Legacy power measurement
+            MeasurementType.POWER_TOTAL: "power_total",
         }[self]
