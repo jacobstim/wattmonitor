@@ -36,13 +36,12 @@ MQTT_PORT = 1883
 #  - name: the friendly name of the meter (used mainly for Home Assistant)
 #  - homeassistant: whether to use Home Assistant MQTT Auto-Discovery (true/false)
 #       * This will publish the meter configuration to Home Assistant upon startup
-#       * The meter data is also published every minute to Home Assistant
+#       * The meter data is also published every 5 seconds to Home Assistant
 #       * Frequently updated meter data is never published to Home Assistant
 #  - custom_pub_topic: the custom topic to publish the "frequently updated" data
 #  - custom_pub_topic_avg: the custom topic to publish the "average per minute" data
 #  - modbus_delay: delay in seconds after reading this meter (to prevent communication mix-ups)
 #       * Default: 0.05 (50ms) for most meters
-#       * CSMB: 0.15 (150ms) due to slower response times
 # It is possible to use either HA or custom topics, or both.
 # The custom topics are optional, if not provided, the meter data will not be published to custom topics.
 
@@ -305,28 +304,32 @@ class MeterDataHandler():
             measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
 
         # If we are expected to publish to our separate topic, do so...
-        if self.topic:
+        if self.topic or self.ha:
             # Convert to JSON
             jsondata = json.dumps(measurements)
-            logging.info("---- JSON Data (topic: " + self.topic + ") ----------------------------------------\n" + jsondata)
+            logging.info("---- JSON Data ----------------------------------------------------------------------------\n" + jsondata)
 
-            # Post to MQTT server
-            self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
+            if self.topic:
+                # Post to MQTT server
+                logging.info("-> Published to: " + self.topic)
+                self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
+
+            if self.ha:
+                # In case we need to publish to HA, also do that
+                logging.info("-> Published to: " + self.ha_statetopic)
+                self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
 
     def pushAverageMeasurements(self):
          # Retrieve averages of past 60 minutes
         jsondata = self.minute_data.to_json()
-        logging.info("Publishing minute averages...")
+        if self.topic_avg or self.ha:
+            logging.info("---- Per minute data (topic: " + self.topic_avg + ") --------------------------------------\n" + jsondata)
+
         # Post to MQTT server
         if self.topic_avg:
             logging.info("-> Published to: " + self.topic_avg)
             self.mqttclient.publish(self.topic_avg, payload = jsondata, qos=1)
-        if self.ha:
-            # In case we need to publish to HA, also do that
-            logging.info("-> Published to: " + self.ha_statetopic)
-            self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
-        if self.topic_avg or self.ha:
-            logging.info("---- Per minute data (topic: " + self.topic_avg + ") ---------------------------------\n" + jsondata)
+
         # Clear and restart
         self.minute_data.clear()   
 
