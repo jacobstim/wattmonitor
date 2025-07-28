@@ -46,12 +46,12 @@ MQTT_PORT = 1883
 # The custom topics are optional, if not provided, the meter data will not be published to custom topics.
 
 METER_CONFIG = [
-    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min", "modbus_delay": 0.05},
-    {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min", "modbus_delay": 0.05},
-    {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min", "modbus_delay": 0.05},
-    {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min", "modbus_delay": 0.05},
-    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min", "modbus_delay": 0.05},
-    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min", "modbus_delay": 0.05},
+    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min", "modbus_delay": 0},
+    {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min", "modbus_delay": 0},
+    {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min", "modbus_delay": 0},
+    {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min", "modbus_delay": 0},
+    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min", "modbus_delay": 0},
+    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min", "modbus_delay": 0},
 ]
 
 ########################################################################################
@@ -339,14 +339,14 @@ class MeterDataHandler():
 
 
 # This pushes the data every 5 seconds for analytical purposes
-def loop_5s(meters):
+def loop_fast(meters):
     # Read the secondly data for every meter and send it
     for meterhandler in meters:
         meterhandler.pushMeasurements()
 
 
 # This publishes average data every 60 seconds for dashboarding purposes
-def loop_60s(meters):
+def loop_slow(meters):
     # Send the minute average data
     for meterhandler in meters:
         meterhandler.pushAverageMeasurements()
@@ -402,7 +402,7 @@ def main():
         coordinator = initialize_coordinator(master._client)  # Pass the abstracted client
         
         # Set default inter-request delay
-        coordinator.set_inter_request_delay(0.05)  # 50ms default between requests
+        coordinator.set_inter_request_delay(0)          # No delay between requests by default
         
     except Exception as exc:
         logger.error("Modbus initialization failed: %s", exc)
@@ -436,8 +436,8 @@ def main():
     scheduler = SingleThreadScheduler()
     
     # Add tasks to scheduler
-    scheduler.add_task("5_second_readings", 5.0, loop_5s, meters)
-    scheduler.add_task("60_second_averages", 60.0, loop_60s, meters)
+    scheduler.add_task("fast_readings", 3, loop_fast, meters)
+    scheduler.add_task("compute_averages", 60.0, loop_slow, meters)
     scheduler.add_task("connection_monitor", 30.0, monitor_connections, master, mqttclient, logger)
 
     try:
@@ -455,7 +455,10 @@ def main():
 ### ACTUAL MAIN
 ########################################################################################
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 if __name__ == '__main__':
 	main()

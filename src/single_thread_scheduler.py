@@ -18,19 +18,19 @@ class ScheduledTask:
         self.func = func
         self.args = args
         self.kwargs = kwargs
-        self.last_run = datetime.now() - self.interval  # Start next run immediately
-        self.next_run = self.last_run 
-        
-    def should_run(self) -> bool:
+        self.last_run = datetime.now() - self.interval  
+        self.next_run = datetime.now() # Start next run immediately
+
+    def should_run(self, current_time: datetime) -> bool:
         """Check if this task should run now"""
-        return datetime.now() >= self.next_run
-        
-    def execute(self):
+        return current_time >= self.next_run
+
+    def execute(self, current_time: datetime):
         """Execute the task and schedule next run"""
         try:
-            self.last_run = self.last_run + self.interval  # We want to avoid drift because of the few ms that datetime.now() takes, so when we run, we assume this was properly triggered. 
-            self.next_run = self.last_run + self.interval  
+            self.last_run = current_time
             self.func(*self.args, **self.kwargs)
+            self.next_run = self.last_run + self.interval  
             logging.info(f"Task '{self.name}' executed successfully. Next run: {self.next_run}")
         except Exception as e:
             # Next run is always scheduled after the last run, even on failure
@@ -66,14 +66,14 @@ class SingleThreadScheduler:
                 tasks_run = 0
                 
                 for task in self.tasks:
-                    if task.should_run():
-                        self._logger.debug(f"Executing task: {task.name}")
-                        task.execute()
+                    if task.should_run(current_time):
+                        self._logger.info(f"Executing task: {task.name}")
+                        task.execute(current_time)
                         tasks_run += 1
                 
                 # Sleep for a short time to prevent busy waiting
                 # Use a smaller sleep interval for more precise timing
-                time.sleep(0.1)
+                time.sleep(0.01)
                 
             except KeyboardInterrupt:
                 self._logger.info("Scheduler interrupted by user")

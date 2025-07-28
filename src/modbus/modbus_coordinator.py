@@ -31,10 +31,7 @@ class ModbusCoordinator:
         
         # Add inter-request delays to prevent communication mix-ups
         self._inter_request_delay = 0.05  # 50ms default delay between requests
-        self._device_delays = {
-            # Special delays for specific device types that need more time
-            30: 0.15,  # CSMB devices need longer delays (150ms)
-        }
+        self._device_delays = {}  # Custom delays for specific device IDs}
         self._last_request_time = 0
         self._retry_attempts = 3  # Number of retry attempts for failed requests
         

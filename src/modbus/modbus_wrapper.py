@@ -110,7 +110,7 @@ def connect_modbus(master: WattMonitorModbusClient, logger: logging.Logger):
 
 def setup_modbus_logger(level: int = logging.DEBUG) -> logging.Logger:
     """
-    Setup modbus logger (replaces modbus_tk.utils.create_logger)
+    Setup modbus logger
     """
     setup_modbus_logging(level)
     return logging.getLogger('modbus')

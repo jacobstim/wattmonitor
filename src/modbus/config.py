@@ -15,7 +15,7 @@ class ModbusConfig:
     timeout: float = 5.0
     client_type: str = "modbus_tk"
     retry_attempts: int = 3
-    inter_request_delay: float = 0.05
+    inter_request_delay: float = 0
     device_delays: Optional[Dict[int, float]] = None
     
     def __post_init__(self):
