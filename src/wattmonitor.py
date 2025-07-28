@@ -1,7 +1,6 @@
 import paho.mqtt.client as mqtt
-import modbus_tk
-import modbus_tk.defines as cst
-from modbus_tk import modbus_tcp, hooks
+# Use the new modbus abstraction layer
+from modbus.modbus_wrapper import create_modbus_master, connect_modbus, setup_modbus_logger
 from time import sleep
 from datetime import datetime
 import logging
@@ -9,7 +8,7 @@ import json
 import itertools
 from enum import Enum
 from meters.measurements import MeasurementType
-from modbus_coordinator import initialize_coordinator
+from modbus.modbus_coordinator import initialize_coordinator
 from single_thread_scheduler import SingleThreadScheduler
 
 # Meters to use
@@ -22,6 +21,9 @@ from meters import iMEM3155, iMEM2150, ECR140D, CSMB
 # Modbus TCP server to connect to
 MODBUS_SERVER = "172.16.0.60"
 MODBUS_PORT = 502
+
+# Configuration: choose between "modbus_tk" and "pymodbus"
+MODBUS_CLIENT_TYPE = "pymodbus" # "modbus_tk"  
 
 # MQTT server to publish collected data to
 MQTT_SERVER = "mqtt.home.local"
@@ -45,12 +47,12 @@ MQTT_PORT = 1883
 # The custom topics are optional, if not provided, the meter data will not be published to custom topics.
 
 METER_CONFIG = [
-#    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min", "modbus_delay": 0.05},
+    {"type": "CSMB", "modbus_id": 30, "name": "csmb", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/csmb/data/sec", "custom_pub_topic_avg": "smarthome/energy/csmb/data/min", "modbus_delay": 0.05},
     {"type": "A9MEM3155", "modbus_id": 10, "name": "iem3155", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem3155/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem3155/data/min", "modbus_delay": 0.05},
     {"type": "A9MEM2150", "modbus_id": 20, "name": "iem2150-airco1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco1/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco1/data/min", "modbus_delay": 0.05},
     {"type": "A9MEM2150", "modbus_id": 21, "name": "iem2150-airco2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/iem2150-airco2/data/sec", "custom_pub_topic_avg": "smarthome/energy/iem2150-airco2/data/min", "modbus_delay": 0.05},
-#    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min", "modbus_delay": 0.05},
-#    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min", "modbus_delay": 0.05},
+    {"type": "ECR140D", "modbus_id": 25, "name": "ecr140d-unit1", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit1/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit1/data/min", "modbus_delay": 0.05},
+    {"type": "ECR140D", "modbus_id": 26, "name": "ecr140d-unit2", "homeassistant": "true", "custom_pub_topic": "smarthome/energy/ecr140d-unit2/data/sec", "custom_pub_topic_avg": "smarthome/energy/ecr140d-unit2/data/min", "modbus_delay": 0.05},
 ]
 
 ########################################################################################
@@ -152,7 +154,7 @@ class MeterDataHandler():
                 "unique_id": f"{self.ha_id}_{measurement.valuename}"
             }
             config_topic = f"homeassistant/sensor/{self.ha_id}/{measurement.valuename}/config"
-            logging.debug(f"Posting Home Assistant MQTT Self-Discovery to: {config_topic}")
+            logging.info(f"Posting Home Assistant MQTT Self-Discovery to: {config_topic}")
             self.mqttclient.publish(config_topic, json.dumps(discovery_payload), qos=1, retain=True)
 
     def pushMeasurements(self):
@@ -306,7 +308,7 @@ class MeterDataHandler():
         if self.topic:
             # Convert to JSON
             jsondata = json.dumps(measurements)
-            logging.debug("---- JSON Data (topic: " + self.topic + ") ----------------------------------------\n" + jsondata)
+            logging.info("---- JSON Data (topic: " + self.topic + ") ----------------------------------------\n" + jsondata)
 
             # Post to MQTT server
             self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
@@ -314,17 +316,17 @@ class MeterDataHandler():
     def pushAverageMeasurements(self):
          # Retrieve averages of past 60 minutes
         jsondata = self.minute_data.to_json()
-        logging.debug("Publishing minute averages...")
+        logging.info("Publishing minute averages...")
         # Post to MQTT server
         if self.topic_avg:
-            logging.debug("-> Published to: " + self.topic_avg)
+            logging.info("-> Published to: " + self.topic_avg)
             self.mqttclient.publish(self.topic_avg, payload = jsondata, qos=1)
         if self.ha:
             # In case we need to publish to HA, also do that
-            logging.debug("-> Published to: " + self.ha_statetopic)
+            logging.info("-> Published to: " + self.ha_statetopic)
             self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
         if self.topic_avg or self.ha:
-            logging.debug("---- Per minute data (topic: " + self.topic_avg + ") ---------------------------------\n" + jsondata)
+            logging.info("---- Per minute data (topic: " + self.topic_avg + ") ---------------------------------\n" + jsondata)
         # Clear and restart
         self.minute_data.clear()   
 
@@ -349,7 +351,7 @@ def loop_60s(meters):
 # Monitor connections and reconnect if needed
 def monitor_connections(master, mqttclient, logger):
     """Monitor Modbus and MQTT connections and reconnect if needed"""
-    if not master._is_opened:
+    if not master.is_connected:
         logger.warning("Modbus connection lost. Attempting to reconnect...")
         connect_modbus(master, logger)
     if not mqttclient.is_connected():
@@ -370,18 +372,6 @@ def mqtt_on_connect(client, userdata, flags, reason_code, properties):
 
 meters = []
 
-def connect_modbus(master, logger):
-    backoff = itertools.chain((1, 2, 4, 8, 16, 32, 64, 128, 256, 300), itertools.repeat(300))
-    while True:
-        try:
-            master.open()
-            logger.info("Connected to Modbus server")
-            return
-        except modbus_tk.modbus.ModbusError as exc:
-            delay = next(backoff)
-            logger.error("%s - Code=%d. Retrying in %d seconds...", exc, exc.get_exception_code(), delay)
-            sleep(delay)
-
 def connect_mqtt(mqttclient, logger):
     backoff = itertools.chain((1, 2, 4, 8, 16, 32, 64, 128, 256, 300), itertools.repeat(300))
     while True:
@@ -397,25 +387,23 @@ def connect_mqtt(mqttclient, logger):
 
 def main():
     # Configure Modbus
-    logger = modbus_tk.utils.create_logger("console", level=logging.DEBUG)
-    # hooks.install_hook('modbus.Master.after_recv', modbus_on_after_recv)
-    # hooks.install_hook("modbus_tcp.TcpMaster.before_connect", modbus_on_before_connect)
-    # hooks.install_hook("modbus_tcp.TcpMaster.after_recv", modbus_on_after_recv)
-
+    logger = setup_modbus_logger(logging.INFO)
+    
     try:
-        # Configure Modbus TCP server
-        master = modbus_tcp.TcpMaster(host=MODBUS_SERVER, port=MODBUS_PORT)
+        # Configure Modbus TCP server using the new abstraction
+        master = create_modbus_master(MODBUS_SERVER, MODBUS_PORT, MODBUS_CLIENT_TYPE)
         master.set_timeout(5.0)
         connect_modbus(master, logger)
         
         # Initialize the Modbus coordinator for thread-safe communication
-        coordinator = initialize_coordinator(master)
+        coordinator = initialize_coordinator(master._client)  # Pass the abstracted client
         
         # Set default inter-request delay
         coordinator.set_inter_request_delay(0.05)  # 50ms default between requests
         
-    except modbus_tk.modbus.ModbusError as exc:
-        logger.error("%s - Code=%d", exc, exc.get_exception_code())
+    except Exception as exc:
+        logger.error("Modbus initialization failed: %s", exc)
+        return
 
     # Initialize MQTT
     mqttclient = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -464,7 +452,7 @@ def main():
 ### ACTUAL MAIN
 ########################################################################################
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
 	main()

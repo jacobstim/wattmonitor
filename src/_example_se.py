@@ -1,5 +1,5 @@
-import modbus_tk
-from modbus_tk import modbus_tcp
+from modbus.modbus_wrapper import create_modbus_master, connect_modbus, setup_modbus_logger
+from modbus.modbus_coordinator import initialize_coordinator
 import logging
 
 # Meters to use
@@ -19,12 +19,17 @@ MODBUS_PORT = 502
 logging.basicConfig(level=logging.DEBUG)
 
 try:
-    # Configure Modbus TCP server
-    master = modbus_tcp.TcpMaster(host=MODBUS_SERVER, port=MODBUS_PORT)
+    # Configure Modbus TCP server using the new abstraction
+    logger = setup_modbus_logger(logging.DEBUG)
+    master = create_modbus_master(MODBUS_SERVER, MODBUS_PORT, "modbus_tk")
     master.set_timeout(5.0)
+    connect_modbus(master, logger)
+    
+    # Initialize the Modbus coordinator for thread-safe communication
+    coordinator = initialize_coordinator(master._client)
 
-except modbus_tk.modbus.ModbusError as exc:
-    logging.error("%s - Code=%d", exc, exc.get_exception_code())
+except Exception as exc:
+    logging.error("Modbus connection failed: %s", exc)
 
 # Initialize meters (Modbus Slave ID 21)
 meter1 = A9MEM2150.iMEM2150(master, 21)

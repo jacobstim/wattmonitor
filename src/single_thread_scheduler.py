@@ -31,7 +31,7 @@ class ScheduledTask:
             self.last_run = self.last_run + self.interval  # We want to avoid drift because of the few ms that datetime.now() takes, so when we run, we assume this was properly triggered. 
             self.next_run = self.last_run + self.interval  
             self.func(*self.args, **self.kwargs)
-            logging.debug(f"Task '{self.name}' executed successfully. Next run: {self.next_run}")
+            logging.info(f"Task '{self.name}' executed successfully. Next run: {self.next_run}")
         except Exception as e:
             # Next run is always scheduled after the last run, even on failure
             logging.error(f"Task '{self.name}' failed: {e}")

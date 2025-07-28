@@ -5,6 +5,7 @@ Docker container which reads electricy usage data over Modbus TCP and then posts
      * Schneider Electric iEM3155
      * Schneider Electric iEM2150
      * Hager ECR 140D
+     * Xemex CSMB
 
 Other devices can be almost trivially added if you know the Modbus registers. Pull Requests with new devices are highly appreciated!
 

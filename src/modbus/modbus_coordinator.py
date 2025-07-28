@@ -11,6 +11,8 @@ import time
 
 # Import abstract data types
 from meters.data_types import DataType, RegisterConfig
+# Import the new modbus abstraction layer
+from . import ModbusClientInterface, ModbusException
 
 
 class ModbusCoordinator:
@@ -19,9 +21,8 @@ class ModbusCoordinator:
     Ensures all Modbus requests are executed sequentially in a single thread.
     """
     
-    def __init__(self, modbus_master, use_pymodbus=False):
-        self.modbus_master = modbus_master
-        self.use_pymodbus = use_pymodbus  # Flag to choose between modbus_tk and pymodbus
+    def __init__(self, modbus_client: ModbusClientInterface):
+        self.modbus_client = modbus_client
         self._request_queue = []
         self._response_cache = {}  # Cache responses for a short time to avoid duplicate reads
         self._cache_timeout = 3.0  # Cache responses for 3 seconds
@@ -112,7 +113,7 @@ class ModbusCoordinator:
     
     def _execute_modbus_read(self, meter_id: int, register: int, count: int) -> List[int]:
         """
-        Execute a Modbus holding register read using the configured implementation.
+        Execute a Modbus holding register read using the abstracted client.
         
         Args:
             meter_id: Modbus slave ID
@@ -121,39 +122,18 @@ class ModbusCoordinator:
             
         Returns:
             List of register values
+            
+        Raises:
+            Exception: On communication or protocol errors
         """
-        if self.use_pymodbus:
-            return self._execute_modbus_read_pymodbus(meter_id, register, count)
-        else:
-            return self._execute_modbus_read_modbus_tk(meter_id, register, count)
-    
-    def _execute_modbus_read_modbus_tk(self, meter_id: int, register: int, count: int) -> List[int]:
-        """Execute Modbus read using modbus_tk library"""
-        import modbus_tk.defines as cst
-        
-        result = self.modbus_master.execute(
-            meter_id, cst.READ_HOLDING_REGISTERS, register, 
-            quantity_of_x=count, expected_length=count
-        )
-        return result
-    
-    def _execute_modbus_read_pymodbus(self, meter_id: int, register: int, count: int) -> List[int]:
-        """Execute Modbus read using pymodbus library"""
-        # Note: This implementation assumes self.modbus_master is a pymodbus client
-        # For pymodbus, the client interface is different
-        
-        response = self.modbus_master.read_holding_registers(
-            address=register,
-            count=count,
-            slave=meter_id
-        )
-        
-        # Check for pymodbus exceptions
-        if response.isError():
-            raise Exception(f"Pymodbus error: {response}")
-        
-        # Return the register values
-        return response.registers
+        try:
+            return self.modbus_client.read_holding_registers(meter_id, register, count)
+        except ModbusException as e:
+            # Re-raise as a generic exception to maintain compatibility with existing error handling
+            raise Exception(str(e))
+        except Exception as e:
+            # Re-raise any other exceptions
+            raise Exception(f"Modbus communication error: {str(e)}")
     
     def _convert_to_datatype(self, raw_registers: List[int], config: RegisterConfig) -> Any:
         """Convert raw register values to the specified abstract data type"""
@@ -241,7 +221,7 @@ class ModbusCoordinator:
         # Wait if needed
         if time_since_last < required_delay:
             sleep_time = required_delay - time_since_last
-            #self._logger.debug(f"Waiting {sleep_time:.3f}s for bus ready (meter {meter_id})")
+            self._logger.debug(f"Waiting {sleep_time:.3f}s for bus ready (meter {meter_id})")
             time.sleep(sleep_time)
     
     def _clear_cache_for_meter(self, meter_id: int):
@@ -267,7 +247,7 @@ class ModbusCoordinator:
         cache_size = len(self._response_cache)
         self._response_cache.clear()
         if cache_size > 0:
-            self._logger.info(f"Cleared all {cache_size} cache entries for communication recovery")
+            self._logger.debug(f"Cleared all {cache_size} cache entries for communication recovery")
     
     def configure_device_delays(self, device_delays: Dict[int, float]):
         """
@@ -277,12 +257,12 @@ class ModbusCoordinator:
             device_delays: Dictionary mapping device IDs to delay times in seconds
         """
         self._device_delays.update(device_delays)
-        self._logger.info(f"Updated device delays: {self._device_delays}")
+        self._logger.debug(f"Updated device delays: {self._device_delays}")
     
     def set_inter_request_delay(self, delay: float):
         """Set the default delay between requests"""
         self._inter_request_delay = delay
-        self._logger.info(f"Set inter-request delay to {delay}s")
+        self._logger.debug(f"Set inter-request delay to {delay}s")
  
 # Global coordinator instance
 _coordinator = None
@@ -292,8 +272,8 @@ def get_coordinator():
     global _coordinator
     return _coordinator
 
-def initialize_coordinator(modbus_master, use_pymodbus=False):
+def initialize_coordinator(modbus_client: ModbusClientInterface):
     """Initialize the global Modbus coordinator"""
     global _coordinator
-    _coordinator = ModbusCoordinator(modbus_master, use_pymodbus)
+    _coordinator = ModbusCoordinator(modbus_client)
     return _coordinator

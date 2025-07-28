@@ -2,7 +2,12 @@
 Base meter class that uses the centralized Modbus coordinator
 """
 
-from modbus_coordinator import get_coordinator
+import sys
+import os
+
+# Add the src directory to the path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from .data_types import RegisterConfig
 
 
@@ -15,6 +20,8 @@ class BaseMeter:
     def __init__(self, modbus_master, address=1):
         self._modbus = modbus_master  # Keep for compatibility, but don't use directly
         self._address = address
+        # Import locally to avoid circular import
+        from modbus.modbus_coordinator import get_coordinator
         self._coordinator = get_coordinator()
         
     def modbus_id(self):
