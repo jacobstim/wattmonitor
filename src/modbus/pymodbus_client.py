@@ -89,7 +89,7 @@ class PymodbusClient(ModbusClientInterface):
             response = self._client.read_holding_registers(
                 address=address,
                 count=count,
-                slave=slave_id 
+                device_id=slave_id 
             )
             
             # Check for errors in the response
