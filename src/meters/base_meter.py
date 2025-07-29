@@ -67,7 +67,13 @@ class BaseMeter:
                         batch_config, 
                         self.REGISTER_CONFIGS
                     )
-                    
+
+                    if batch_result is None:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Batch read for {batch_name} returned None. Aborting measurement collection.")
+                        raise Exception(f"Batch read failed for {batch_name}: returned None")
+
                     # Extract individual measurements from the batch
                     for measurement_name in batch_config.measurements:
                         try:
@@ -89,22 +95,12 @@ class BaseMeter:
                             import logging
                             logger = logging.getLogger(__name__)
                             logger.warning(f"Failed to extract {measurement_name} from batch {batch_name}: {e}")
-                
                 except Exception as e:
-                    # If batch read fails, fall back to individual reads for this batch
+                    # If batch read fails, re-raise the exception to stop all processing
                     import logging
                     logger = logging.getLogger(__name__)
-                    logger.warning(f"Batch read failed for {batch_name}, falling back to individual reads: {e}")
-                    
-                    # Fall back to individual reads for measurements in this batch
-                    for measurement_name in batch_config.measurements:
-                        key = measurement_name.value
-                        
-                        if measurement_name in self.REGISTER_CONFIGS:
-                            try:
-                                results[key] = self._read_register_config(self.REGISTER_CONFIGS[measurement_name])
-                            except Exception as individual_e:
-                                logger.warning(f"Individual read also failed for {key}: {individual_e}")
+                    logger.warning(f"Batch read failed for {batch_name}, aborting measurement collection: {e}")
+                    raise e  # Re-raise to stop all measurement processing
         
         # For any measurements not covered by batches, read individually
         if hasattr(self, 'REGISTER_CONFIGS'):

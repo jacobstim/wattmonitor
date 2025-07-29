@@ -81,7 +81,6 @@ class ModbusTkClient(ModbusClientInterface):
         """Read holding registers using modbus_tk"""
         if not self.is_connected():
             raise ModbusException("Not connected to Modbus server")
-        
         try:
             result = self._master.execute(
                 slave_id, 
@@ -91,7 +90,10 @@ class ModbusTkClient(ModbusClientInterface):
                 expected_length=count
             )
             return list(result)
-            
+        except (ConnectionResetError, ConnectionRefusedError, ConnectionAbortedError,
+                TimeoutError, OSError, BrokenPipeError) as e:
+            self._connected = False  # Mark as disconnected
+            raise  # Re-raise the original network exception!
         except modbus_tk.modbus.ModbusError as e:
             error_code = e.get_exception_code() if hasattr(e, 'get_exception_code') else None
             raise ModbusException(f"Modbus error: {str(e)}", error_code)

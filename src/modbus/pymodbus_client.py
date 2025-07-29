@@ -84,25 +84,25 @@ class PymodbusClient(ModbusClientInterface):
         """Read holding registers using pymodbus"""
         if not self.is_connected():
             raise ModbusException("Not connected to Modbus server")
-        
         try:
             response = self._client.read_holding_registers(
                 address=address,
                 count=count,
                 device_id=slave_id 
             )
-            
             # Check for errors in the response
             if response.isError():
                 raise ModbusException(f"Modbus read error: {response}")
-            
             return response.registers
-            
+        except (ConnectionResetError, ConnectionRefusedError, ConnectionAbortedError,
+                TimeoutError, OSError, BrokenPipeError) as e:
+            self._connected = False  # Mark as disconnected
+            raise  # Re-raise the original network exception!
+        except ConnectionException as e:
+            self._connected = False
+            raise  # Re-raise the original connection exception!
         except PymodbusException as e:
             raise ModbusException(f"Pymodbus error: {str(e)}")
-        except ConnectionException as e:
-            self._connected = False  # Mark as disconnected
-            raise ModbusException(f"Connection error: {str(e)}")
         except Exception as e:
             raise ModbusException(f"Communication error: {str(e)}")
     

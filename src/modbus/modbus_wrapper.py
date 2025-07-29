@@ -59,6 +59,11 @@ class WattMonitorModbusClient:
         """Check if connected"""
         return self._client is not None and self._client.is_connected()
     
+    def mark_disconnected(self):
+        """Mark connection as disconnected (e.g., after TCP failure detection)"""
+        if self._client:
+            self._client.disconnect()
+    
     # For compatibility with existing meter code that might access the client directly
     def execute(self, slave_id: int, function_code: int, starting_address: int, quantity_of_x: int, **kwargs):
         """

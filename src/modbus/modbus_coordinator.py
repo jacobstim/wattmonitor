@@ -6,6 +6,7 @@ while maintaining the modularity of individual meter definitions.
 
 import threading
 import logging
+import socket
 from typing import Dict, List, Tuple, Any
 import time
 
@@ -14,6 +15,11 @@ from meters.data_types import DataType, RegisterConfig, BatchRegisterConfig, Bat
 from meters.measurements import MeasurementType
 # Import the new modbus abstraction layer
 from . import ModbusClientInterface, ModbusException
+
+
+class ModbusTCPConnectionError(Exception):
+    """Exception raised when TCP connection to Modbus server is lost"""
+    pass
 
 
 class ModbusCoordinator:
@@ -35,6 +41,29 @@ class ModbusCoordinator:
         self._device_delays = {}  # Custom delays for specific device IDs}
         self._last_request_time = 0
         self._retry_attempts = 3  # Number of retry attempts for failed requests
+        
+    def _is_tcp_connection_error(self, exception: Exception) -> bool:
+        """Check if the exception indicates a TCP connection failure"""
+        # Check for standard network/socket exceptions
+        if isinstance(exception, (
+            ConnectionResetError,        # errno 104 on Unix, WinError 10054 on Windows
+            ConnectionRefusedError,      # errno 111 on Unix, WinError 10061 on Windows  
+            ConnectionAbortedError,      # errno 103 on Unix, WinError 10053 on Windows
+            TimeoutError,               # errno 110 on Unix, WinError 10060 on Windows
+            OSError,                    # General OS errors including network issues
+            socket.error,               # Socket-specific errors
+            BrokenPipeError             # errno 32 on Unix, WinError 109 on Windows
+        )):
+            return True
+        
+        # Check for ModbusException indicating connection loss
+        if exception.__class__.__name__ == 'ModbusException':
+            error_msg = str(exception).lower()
+            if "not connected" in error_msg:
+                return True
+
+        return False
+
         
     def read_register_config(self, meter_id: int, config: RegisterConfig) -> Any:
         """
@@ -59,7 +88,12 @@ class ModbusCoordinator:
                     return cached_result
                 else:
                     del self._response_cache[cache_key]
-            
+
+            # Check if Modbus client is connected
+            if not self.modbus_client.is_connected():
+                self._logger.debug(f"Modbus client not connected. Skipping read_register_config for meter {meter_id}.")
+                raise ModbusTCPConnectionError("Modbus client is not connected")
+
             # Implement inter-request delay
             self._wait_for_bus_ready(meter_id)
             
@@ -90,7 +124,13 @@ class ModbusCoordinator:
                 except Exception as e:
                     last_exception = e
                     error_msg = str(e)
-                                        
+                    
+                    # Check for TCP connection failures first - no retries for these
+                    if self._is_tcp_connection_error(e):
+                        self._logger.error(f"TCP connection failure detected for meter {meter_id}, register 0x{config.register:04X}: {e}")
+                        self.clear_all_cache()  # Clear cache since connection is broken
+                        raise ModbusTCPConnectionError(f"TCP connection lost: {error_msg}") from e
+                                                            
                     # Check for specific error conditions
                     if "Invalid unit id" in error_msg:
                         self._logger.warning(f"Communication mix-up detected for meter {meter_id}, register 0x{config.register:04X} (attempt {attempt + 1}): {e}")                       
@@ -132,7 +172,12 @@ class ModbusCoordinator:
                     return cached_result
                 else:
                     del self._response_cache[cache_key]
-            
+
+            # Check if Modbus client is connected
+            if not self.modbus_client.is_connected():
+                self._logger.debug(f"Modbus client not connected. Skipping read_batch_registers for meter {meter_id}.")
+                raise ModbusTCPConnectionError("Modbus client is not connected")
+
             # Implement inter-request delay
             self._wait_for_bus_ready(meter_id)
             
@@ -166,7 +211,13 @@ class ModbusCoordinator:
                 except Exception as e:
                     last_exception = e
                     error_msg = str(e)
-                                        
+                    
+                    # Check for TCP connection failures first - no retries for these
+                    if self._is_tcp_connection_error(e):
+                        self._logger.error(f"TCP connection failure detected for meter {meter_id}, batch read: {e}")
+                        self.clear_all_cache()  # Clear cache since connection is broken
+                        raise ModbusTCPConnectionError(f"TCP connection lost: {error_msg}") from e
+
                     # Check for specific error conditions
                     if "Invalid unit id" in error_msg:
                         self._logger.warning(f"Communication mix-up detected for meter {meter_id}, batch read (attempt {attempt + 1}): {e}")                       
@@ -219,14 +270,7 @@ class ModbusCoordinator:
         Raises:
             Exception: On communication or protocol errors
         """
-        try:
-            return self.modbus_client.read_holding_registers(meter_id, register, count)
-        except ModbusException as e:
-            # Re-raise as a generic exception to maintain compatibility with existing error handling
-            raise Exception(str(e))
-        except Exception as e:
-            # Re-raise any other exceptions
-            raise Exception(f"Modbus communication error: {str(e)}")
+        return self.modbus_client.read_holding_registers(meter_id, register, count)
     
     def _convert_to_datatype(self, raw_registers: List[int], config: RegisterConfig) -> Any:
         """Convert raw register values to the specified abstract data type"""

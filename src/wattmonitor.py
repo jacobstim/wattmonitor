@@ -8,7 +8,7 @@ import json
 import itertools
 from enum import Enum
 from meters.measurements import MeasurementType
-from modbus.modbus_coordinator import initialize_coordinator
+from modbus.modbus_coordinator import initialize_coordinator, ModbusTCPConnectionError
 from single_thread_scheduler import SingleThreadScheduler
 
 # Meters to use
@@ -170,153 +170,164 @@ class MeterDataHandler():
         # Perform batch reads first to populate cache for all subsequent individual reads
         # This dramatically reduces Modbus communication overhead
         try:
+            # Perform batch reads first to populate cache for all subsequent individual reads
+            # This dramatically reduces Modbus communication overhead
             batch_measurements = self.meter.read_all_measurements()
             logging.debug(f"Batch read completed for {self.name}: {len(batch_measurements)} measurements cached")
+
+            supported_measurements = self.meter.supported_measurements()
+
+            ###################################################################
+            # Voltages
+            ###################################################################
+            # First phase is always supported
+            if MeasurementType.VOLTAGE in supported_measurements:
+                value = self.meter.md_voltage()
+                self.minute_data.add(MeasurementType.VOLTAGE.valuename, value)
+                measurements[MeasurementType.VOLTAGE.valuename] = value
+
+            # Add other metrics only for three-phase meters
+            if self.meter.has_threephase():
+                if MeasurementType.VOLTAGE_L1_N in supported_measurements:
+                    value = self.meter.md_voltage_L1_N()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
+
+                if MeasurementType.VOLTAGE_L_L in supported_measurements:
+                    value = self.meter.md_voltage_L_L()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L_L.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L_L.valuename] = value
+
+                if MeasurementType.VOLTAGE_L1_L2 in supported_measurements:
+                    value = self.meter.md_voltage_L1_L2()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L1_L2.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L1_L2.valuename] = value
+
+                if MeasurementType.VOLTAGE_L2_L3 in supported_measurements:
+                    value = self.meter.md_voltage_L2_L3()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L2_L3.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L2_L3.valuename] = value
+
+                if MeasurementType.VOLTAGE_L3_L1 in supported_measurements:
+                    value = self.meter.md_voltage_L3_L1()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L3_L1.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L3_L1.valuename] = value
+
+                if MeasurementType.VOLTAGE_L2_N in supported_measurements:
+                    value = self.meter.md_voltage_L2_N()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L2_N.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L2_N.valuename] = value
+
+                if MeasurementType.VOLTAGE_L3_N in supported_measurements:
+                    value = self.meter.md_voltage_L3_N()
+                    self.minute_data.add(MeasurementType.VOLTAGE_L3_N.valuename, value)
+                    measurements[MeasurementType.VOLTAGE_L3_N.valuename] = value
+
+            ###################################################################
+            # Power
+            ###################################################################
+            if MeasurementType.POWER in supported_measurements:
+                value = self.meter.md_power()
+                self.minute_data.add(MeasurementType.POWER.valuename, value)
+                measurements[MeasurementType.POWER.valuename] = value
+
+            if self.meter.has_threephase():
+                if MeasurementType.POWER_L1 in supported_measurements:
+                    value = self.meter.md_power_L1()
+                    self.minute_data.add(MeasurementType.POWER_L1.valuename, value)
+                    measurements[MeasurementType.POWER_L1.valuename] = value
+
+                if MeasurementType.POWER_L2 in supported_measurements:
+                    value = self.meter.md_power_L2()
+                    self.minute_data.add(MeasurementType.POWER_L2.valuename, value)
+                    measurements[MeasurementType.POWER_L2.valuename] = value
+
+                if MeasurementType.POWER_L3 in supported_measurements:
+                    value = self.meter.md_power_L3()
+                    self.minute_data.add(MeasurementType.POWER_L3.valuename, value)
+                    measurements[MeasurementType.POWER_L3.valuename] = value
+
+            if MeasurementType.POWER_REACTIVE in supported_measurements:
+                value = self.meter.md_power_reactive()
+                self.minute_data.add(MeasurementType.POWER_REACTIVE.valuename, value)
+                measurements[MeasurementType.POWER_REACTIVE.valuename] = value
+
+            if MeasurementType.POWER_APPARENT in supported_measurements:
+                value = self.meter.md_power_apparent()
+                self.minute_data.add(MeasurementType.POWER_APPARENT.valuename, value)
+                measurements[MeasurementType.POWER_APPARENT.valuename] = value
+
+            ###################################################################
+            # Currents
+            ###################################################################
+            if MeasurementType.CURRENT in supported_measurements:
+                value = self.meter.md_current()
+                self.minute_data.add(MeasurementType.CURRENT.valuename, value)
+                measurements[MeasurementType.CURRENT.valuename] = value
+
+            if self.meter.has_threephase():
+                if MeasurementType.CURRENT_L1 in supported_measurements:
+                    value = self.meter.md_current_L1()
+                    self.minute_data.add(MeasurementType.CURRENT_L1.valuename, value)
+                    measurements[MeasurementType.CURRENT_L1.valuename] = value
+
+                if MeasurementType.CURRENT_L2 in supported_measurements:
+                    value = self.meter.md_current_L2()
+                    self.minute_data.add(MeasurementType.CURRENT_L2.valuename, value)
+                    measurements[MeasurementType.CURRENT_L2.valuename] = value
+
+                if MeasurementType.CURRENT_L3 in supported_measurements:
+                    value = self.meter.md_current_L3()
+                    self.minute_data.add(MeasurementType.CURRENT_L3.valuename, value)
+                    measurements[MeasurementType.CURRENT_L3.valuename] = value
+
+            ###################################################################
+            # Other
+            ###################################################################
+            if MeasurementType.POWER_FACTOR in supported_measurements:
+                value = self.meter.md_powerfactor()
+                self.minute_data.add(MeasurementType.POWER_FACTOR.valuename, value)
+                measurements[MeasurementType.POWER_FACTOR.valuename] = value
+
+            if MeasurementType.FREQUENCY in supported_measurements:
+                value = self.meter.md_frequency()
+                self.minute_data.add(MeasurementType.FREQUENCY.valuename, value)
+                measurements[MeasurementType.FREQUENCY.valuename] = value
+
+            ###################################################################
+            # Totals
+            ###################################################################
+
+            if MeasurementType.ENERGY_TOTAL in supported_measurements:
+                value = self.meter.ed_total()
+                self.minute_data.set(MeasurementType.ENERGY_TOTAL.valuename, value)
+                measurements[MeasurementType.ENERGY_TOTAL.valuename] = value
+
+            if MeasurementType.ENERGY_TOTAL_EXPORT in supported_measurements:
+                value = self.meter.ed_total_export()
+                self.minute_data.set(MeasurementType.ENERGY_TOTAL_EXPORT.valuename, value)
+                measurements[MeasurementType.ENERGY_TOTAL_EXPORT.valuename] = value
+
+            if MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT in supported_measurements:
+                value = self.meter.ed_total_reactive_import()
+                self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename, value)
+                measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename] = value
+
+            if MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT in supported_measurements:
+                value = self.meter.ed_total_reactive_export()
+                self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename, value)
+                measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
+                
+        except ModbusTCPConnectionError as e:
+            logging.error(f"TCP connection error during measurements for {self.name}: {e}")
+            # Mark the modbus connection as disconnected
+            if hasattr(self.meter, '_modbus') and hasattr(self.meter._modbus, 'mark_disconnected'):
+                self.meter._modbus.mark_disconnected()
+            return  # Skip publishing when TCP connection fails
+
         except Exception as e:
-            logging.warning(f"Batch read failed for {self.name}, falling back to individual reads: {e}")
-
-        supported_measurements = self.meter.supported_measurements()
-
-        ###################################################################
-        # Voltages
-        ###################################################################
-        # First phase is always supported
-        if MeasurementType.VOLTAGE in supported_measurements:
-            value = self.meter.md_voltage()
-            self.minute_data.add(MeasurementType.VOLTAGE.valuename, value)
-            measurements[MeasurementType.VOLTAGE.valuename] = value
-
-        # Add other metrics only for three-phase meters
-        if self.meter.has_threephase():
-            if MeasurementType.VOLTAGE_L1_N in supported_measurements:
-                value = self.meter.md_voltage_L1_N()
-                self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
-
-            if MeasurementType.VOLTAGE_L_L in supported_measurements:
-                value = self.meter.md_voltage_L_L()
-                self.minute_data.add(MeasurementType.VOLTAGE_L_L.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L_L.valuename] = value
-
-            if MeasurementType.VOLTAGE_L1_L2 in supported_measurements:
-                value = self.meter.md_voltage_L1_L2()
-                self.minute_data.add(MeasurementType.VOLTAGE_L1_L2.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L1_L2.valuename] = value
-
-            if MeasurementType.VOLTAGE_L2_L3 in supported_measurements:
-                value = self.meter.md_voltage_L2_L3()
-                self.minute_data.add(MeasurementType.VOLTAGE_L2_L3.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L2_L3.valuename] = value
-
-            if MeasurementType.VOLTAGE_L3_L1 in supported_measurements:
-                value = self.meter.md_voltage_L3_L1()
-                self.minute_data.add(MeasurementType.VOLTAGE_L3_L1.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L3_L1.valuename] = value
-
-            if MeasurementType.VOLTAGE_L2_N in supported_measurements:
-                value = self.meter.md_voltage_L2_N()
-                self.minute_data.add(MeasurementType.VOLTAGE_L2_N.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L2_N.valuename] = value
-
-            if MeasurementType.VOLTAGE_L3_N in supported_measurements:
-                value = self.meter.md_voltage_L3_N()
-                self.minute_data.add(MeasurementType.VOLTAGE_L3_N.valuename, value)
-                measurements[MeasurementType.VOLTAGE_L3_N.valuename] = value
-
-        ###################################################################
-        # Power
-        ###################################################################
-        if MeasurementType.POWER in supported_measurements:
-            value = self.meter.md_power()
-            self.minute_data.add(MeasurementType.POWER.valuename, value)
-            measurements[MeasurementType.POWER.valuename] = value
-
-        if self.meter.has_threephase():
-            if MeasurementType.POWER_L1 in supported_measurements:
-                value = self.meter.md_power_L1()
-                self.minute_data.add(MeasurementType.POWER_L1.valuename, value)
-                measurements[MeasurementType.POWER_L1.valuename] = value
-
-            if MeasurementType.POWER_L2 in supported_measurements:
-                value = self.meter.md_power_L2()
-                self.minute_data.add(MeasurementType.POWER_L2.valuename, value)
-                measurements[MeasurementType.POWER_L2.valuename] = value
-
-            if MeasurementType.POWER_L3 in supported_measurements:
-                value = self.meter.md_power_L3()
-                self.minute_data.add(MeasurementType.POWER_L3.valuename, value)
-                measurements[MeasurementType.POWER_L3.valuename] = value
-
-        if MeasurementType.POWER_REACTIVE in supported_measurements:
-            value = self.meter.md_power_reactive()
-            self.minute_data.add(MeasurementType.POWER_REACTIVE.valuename, value)
-            measurements[MeasurementType.POWER_REACTIVE.valuename] = value
-
-        if MeasurementType.POWER_APPARENT in supported_measurements:
-            value = self.meter.md_power_apparent()
-            self.minute_data.add(MeasurementType.POWER_APPARENT.valuename, value)
-            measurements[MeasurementType.POWER_APPARENT.valuename] = value
-
-        ###################################################################
-        # Currents
-        ###################################################################
-        if MeasurementType.CURRENT in supported_measurements:
-            value = self.meter.md_current()
-            self.minute_data.add(MeasurementType.CURRENT.valuename, value)
-            measurements[MeasurementType.CURRENT.valuename] = value
-
-        if self.meter.has_threephase():
-            if MeasurementType.CURRENT_L1 in supported_measurements:
-                value = self.meter.md_current_L1()
-                self.minute_data.add(MeasurementType.CURRENT_L1.valuename, value)
-                measurements[MeasurementType.CURRENT_L1.valuename] = value
-
-            if MeasurementType.CURRENT_L2 in supported_measurements:
-                value = self.meter.md_current_L2()
-                self.minute_data.add(MeasurementType.CURRENT_L2.valuename, value)
-                measurements[MeasurementType.CURRENT_L2.valuename] = value
-
-            if MeasurementType.CURRENT_L3 in supported_measurements:
-                value = self.meter.md_current_L3()
-                self.minute_data.add(MeasurementType.CURRENT_L3.valuename, value)
-                measurements[MeasurementType.CURRENT_L3.valuename] = value
-
-        ###################################################################
-        # Other
-        ###################################################################
-        if MeasurementType.POWER_FACTOR in supported_measurements:
-            value = self.meter.md_powerfactor()
-            self.minute_data.add(MeasurementType.POWER_FACTOR.valuename, value)
-            measurements[MeasurementType.POWER_FACTOR.valuename] = value
-
-        if MeasurementType.FREQUENCY in supported_measurements:
-            value = self.meter.md_frequency()
-            self.minute_data.add(MeasurementType.FREQUENCY.valuename, value)
-            measurements[MeasurementType.FREQUENCY.valuename] = value
-
-        ###################################################################
-        # Totals
-        ###################################################################
-
-        if MeasurementType.ENERGY_TOTAL in supported_measurements:
-            value = self.meter.ed_total()
-            self.minute_data.set(MeasurementType.ENERGY_TOTAL.valuename, value)
-            measurements[MeasurementType.ENERGY_TOTAL.valuename] = value
-
-        if MeasurementType.ENERGY_TOTAL_EXPORT in supported_measurements:
-            value = self.meter.ed_total_export()
-            self.minute_data.set(MeasurementType.ENERGY_TOTAL_EXPORT.valuename, value)
-            measurements[MeasurementType.ENERGY_TOTAL_EXPORT.valuename] = value
-
-        if MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT in supported_measurements:
-            value = self.meter.ed_total_reactive_import()
-            self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename, value)
-            measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename] = value
-
-        if MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT in supported_measurements:
-            value = self.meter.ed_total_reactive_export()
-            self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename, value)
-            measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
+            logging.error(f"Error reading measurements for {self.name}: {e}")
+            return
 
         # If we are expected to publish to our separate topic, do so...
         if self.topic or self.ha:
@@ -355,16 +366,32 @@ class MeterDataHandler():
 
 # This pushes the data every 5 seconds for analytical purposes
 def loop_fast(meters):
+    # Skip if no connection
+    if not meters or not meters[0].meter._modbus.is_connected:
+        logging.debug("Skipping fast loop - Modbus connection not available")
+        return
+    
     # Read the secondly data for every meter and send it
     for meterhandler in meters:
-        meterhandler.pushMeasurements()
+        try:
+            meterhandler.pushMeasurements()
+        except Exception as e:
+            logging.error(f"Error reading meter {meterhandler.name}: {e}")
 
 
 # This publishes average data every 60 seconds for dashboarding purposes
 def loop_slow(meters):
+    # Skip if no connection
+    if not meters or not meters[0].meter._modbus.is_connected:
+        logging.debug("Skipping slow loop - Modbus connection not available")
+        return
+    
     # Send the minute average data
     for meterhandler in meters:
-        meterhandler.pushAverageMeasurements()
+        try:
+            meterhandler.pushAverageMeasurements()
+        except Exception as e:
+            logging.error(f"Error publishing averages for meter {meterhandler.name}: {e}")
 
 # Monitor connections and reconnect if needed
 def monitor_connections(master, mqttclient, logger):
