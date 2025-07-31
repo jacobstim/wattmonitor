@@ -1,5 +1,9 @@
 from enum import Enum
 
+class MeasurementFrequency(Enum):
+    FAST = "fast"
+    SLOW = "slow"
+
 class MeasurementType(Enum):
     VOLTAGE = "voltage"
     POWER = "power"
@@ -33,6 +37,17 @@ class MeasurementType(Enum):
     MANUFACTURE_DATE = "manufacturedate"
     # Legacy power measurement
     POWER_TOTAL = "power_total"
+
+    @classmethod
+    def get_three_phase_measurements(cls):
+        """Return a set of measurement types that are specific to three-phase meters"""
+        return {
+            cls.VOLTAGE_L1_N, cls.VOLTAGE_L_L, cls.VOLTAGE_L1_L2,
+            cls.VOLTAGE_L2_L3, cls.VOLTAGE_L3_L1, cls.VOLTAGE_L2_N,
+            cls.VOLTAGE_L3_N, cls.POWER_L1, cls.POWER_L2,
+            cls.POWER_L3, cls.CURRENT_L1, cls.CURRENT_L2,
+            cls.CURRENT_L3
+        }
 
     @property
     def unit(self):

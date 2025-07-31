@@ -7,12 +7,56 @@ import logging
 import json
 import itertools
 from enum import Enum
-from meters.measurements import MeasurementType
+from meters.measurements import MeasurementType, MeasurementFrequency
 from modbus.modbus_coordinator import initialize_coordinator, ModbusTCPConnectionError
 from single_thread_scheduler import SingleThreadScheduler
 
 # Meters to use
 from meters import iMEM3155, iMEM2150, ECR140D, CSMB
+
+########################################################################################
+### MEASUREMENT CONFIGURATION
+########################################################################################
+# List of measurements to perform for every meter (if the meter supports it)
+# Also defines the publishing frequency of the measurement:
+# - FAST: every 5 seconds published 
+# - SLOW: every 60 seconds published 
+# This allows to send critical measurements (e.g. current, voltage, power) frequently,
+# while less critical measurements (e.g. energy totals) can be sent less frequently.
+# The mqtt topic publishes to the MQTT server, while the "ha" topic is used for Home Assistant MQTT
+# publishing. 
+#
+# This allows to publish a lot of data to a generic MQTT topic (for whatever purpose), 
+# and avoids Home Assistant of being flooded with data every few seconds for every measurement.
+# In our case, we want to publish CURRENT measurements fast to HA (because this controls EV charging),
+# but the other data can just come in every minute for dashboarding purposes.
+
+MEASUREMENTS_TO_PERFORM = {
+    MeasurementType.VOLTAGE: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L1_N: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L_L: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L1_L2: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L2_L3: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L3_L1: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L2_N: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.VOLTAGE_L3_N: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER_L1: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER_L2: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER_L3: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER_REACTIVE: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.POWER_APPARENT: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.CURRENT: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.FAST},
+    MeasurementType.CURRENT_L1: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.FAST},
+    MeasurementType.CURRENT_L2: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.FAST},
+    MeasurementType.CURRENT_L3: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.FAST},
+    MeasurementType.POWER_FACTOR: {"mqtt": MeasurementFrequency.SLOW, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.FREQUENCY: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.ENERGY_TOTAL: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.ENERGY_TOTAL_EXPORT: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+    MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT: {"mqtt": MeasurementFrequency.FAST, "ha": MeasurementFrequency.SLOW},
+}
 
 ########################################################################################
 ### CONFIGURATION
@@ -163,160 +207,97 @@ class MeterDataHandler():
             logging.info(f"Posting Home Assistant MQTT Self-Discovery to: {config_topic}")
             self.mqttclient.publish(config_topic, json.dumps(discovery_payload), qos=1, retain=True)
 
-    def pushMeasurements(self):
+    def doMeasurements(self):
+        """Perform all configured measurements and return a dictionary of results"""
         measurements = {}
         measurements["timestamp"] = datetime.now().isoformat()
-
+        
         # Perform batch reads first to populate cache for all subsequent individual reads
         # This dramatically reduces Modbus communication overhead
-        try:
-            # Perform batch reads first to populate cache for all subsequent individual reads
-            # This dramatically reduces Modbus communication overhead
-            batch_measurements = self.meter.read_all_measurements()
-            logging.debug(f"Batch read completed for {self.name}: {len(batch_measurements)} measurements cached")
+        batch_measurements = self.meter.read_all_measurements()
+        logging.debug(f"Batch read completed for {self.name}: {len(batch_measurements)} measurements cached")
 
-            supported_measurements = self.meter.supported_measurements()
+        ###################################################################
+        # Process all configured measurements
+        ###################################################################
+        supported_measurements = self.meter.supported_measurements()
 
-            ###################################################################
-            # Voltages
-            ###################################################################
-            # First phase is always supported
-            if MeasurementType.VOLTAGE in supported_measurements:
+        for measurement_type in MEASUREMENTS_TO_PERFORM:
+            # Skip unsupported measurements
+            if measurement_type not in supported_measurements:
+                continue
+            
+            # Skip three-phase specific measurements for single-phase meters
+            if measurement_type in MeasurementType.get_three_phase_measurements() and not self.meter.has_threephase():
+                continue
+
+            # Read the measurement value based on type
+            if measurement_type == MeasurementType.VOLTAGE:
                 value = self.meter.md_voltage()
-                self.minute_data.add(MeasurementType.VOLTAGE.valuename, value)
-                measurements[MeasurementType.VOLTAGE.valuename] = value
-
-            # Add other metrics only for three-phase meters
-            if self.meter.has_threephase():
-                if MeasurementType.VOLTAGE_L1_N in supported_measurements:
-                    value = self.meter.md_voltage_L1_N()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L1_N.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L1_N.valuename] = value
-
-                if MeasurementType.VOLTAGE_L_L in supported_measurements:
-                    value = self.meter.md_voltage_L_L()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L_L.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L_L.valuename] = value
-
-                if MeasurementType.VOLTAGE_L1_L2 in supported_measurements:
-                    value = self.meter.md_voltage_L1_L2()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L1_L2.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L1_L2.valuename] = value
-
-                if MeasurementType.VOLTAGE_L2_L3 in supported_measurements:
-                    value = self.meter.md_voltage_L2_L3()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L2_L3.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L2_L3.valuename] = value
-
-                if MeasurementType.VOLTAGE_L3_L1 in supported_measurements:
-                    value = self.meter.md_voltage_L3_L1()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L3_L1.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L3_L1.valuename] = value
-
-                if MeasurementType.VOLTAGE_L2_N in supported_measurements:
-                    value = self.meter.md_voltage_L2_N()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L2_N.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L2_N.valuename] = value
-
-                if MeasurementType.VOLTAGE_L3_N in supported_measurements:
-                    value = self.meter.md_voltage_L3_N()
-                    self.minute_data.add(MeasurementType.VOLTAGE_L3_N.valuename, value)
-                    measurements[MeasurementType.VOLTAGE_L3_N.valuename] = value
-
-            ###################################################################
-            # Power
-            ###################################################################
-            if MeasurementType.POWER in supported_measurements:
+            elif measurement_type == MeasurementType.VOLTAGE_L1_N:
+                value = self.meter.md_voltage_L1_N()
+            elif measurement_type == MeasurementType.VOLTAGE_L_L:
+                value = self.meter.md_voltage_L_L()
+            elif measurement_type == MeasurementType.VOLTAGE_L1_L2:
+                value = self.meter.md_voltage_L1_L2()
+            elif measurement_type == MeasurementType.VOLTAGE_L2_L3:
+                value = self.meter.md_voltage_L2_L3()
+            elif measurement_type == MeasurementType.VOLTAGE_L3_L1:
+                value = self.meter.md_voltage_L3_L1()
+            elif measurement_type == MeasurementType.VOLTAGE_L2_N:
+                value = self.meter.md_voltage_L2_N()
+            elif measurement_type == MeasurementType.VOLTAGE_L3_N:
+                value = self.meter.md_voltage_L3_N()
+            elif measurement_type == MeasurementType.POWER:
                 value = self.meter.md_power()
-                self.minute_data.add(MeasurementType.POWER.valuename, value)
-                measurements[MeasurementType.POWER.valuename] = value
-
-            if self.meter.has_threephase():
-                if MeasurementType.POWER_L1 in supported_measurements:
-                    value = self.meter.md_power_L1()
-                    self.minute_data.add(MeasurementType.POWER_L1.valuename, value)
-                    measurements[MeasurementType.POWER_L1.valuename] = value
-
-                if MeasurementType.POWER_L2 in supported_measurements:
-                    value = self.meter.md_power_L2()
-                    self.minute_data.add(MeasurementType.POWER_L2.valuename, value)
-                    measurements[MeasurementType.POWER_L2.valuename] = value
-
-                if MeasurementType.POWER_L3 in supported_measurements:
-                    value = self.meter.md_power_L3()
-                    self.minute_data.add(MeasurementType.POWER_L3.valuename, value)
-                    measurements[MeasurementType.POWER_L3.valuename] = value
-
-            if MeasurementType.POWER_REACTIVE in supported_measurements:
+            elif measurement_type == MeasurementType.POWER_L1:
+                value = self.meter.md_power_L1()
+            elif measurement_type == MeasurementType.POWER_L2:
+                value = self.meter.md_power_L2()
+            elif measurement_type == MeasurementType.POWER_L3:
+                value = self.meter.md_power_L3()
+            elif measurement_type == MeasurementType.POWER_REACTIVE:
                 value = self.meter.md_power_reactive()
-                self.minute_data.add(MeasurementType.POWER_REACTIVE.valuename, value)
-                measurements[MeasurementType.POWER_REACTIVE.valuename] = value
-
-            if MeasurementType.POWER_APPARENT in supported_measurements:
+            elif measurement_type == MeasurementType.POWER_APPARENT:
                 value = self.meter.md_power_apparent()
-                self.minute_data.add(MeasurementType.POWER_APPARENT.valuename, value)
-                measurements[MeasurementType.POWER_APPARENT.valuename] = value
-
-            ###################################################################
-            # Currents
-            ###################################################################
-            if MeasurementType.CURRENT in supported_measurements:
+            elif measurement_type == MeasurementType.CURRENT:
                 value = self.meter.md_current()
-                self.minute_data.add(MeasurementType.CURRENT.valuename, value)
-                measurements[MeasurementType.CURRENT.valuename] = value
-
-            if self.meter.has_threephase():
-                if MeasurementType.CURRENT_L1 in supported_measurements:
-                    value = self.meter.md_current_L1()
-                    self.minute_data.add(MeasurementType.CURRENT_L1.valuename, value)
-                    measurements[MeasurementType.CURRENT_L1.valuename] = value
-
-                if MeasurementType.CURRENT_L2 in supported_measurements:
-                    value = self.meter.md_current_L2()
-                    self.minute_data.add(MeasurementType.CURRENT_L2.valuename, value)
-                    measurements[MeasurementType.CURRENT_L2.valuename] = value
-
-                if MeasurementType.CURRENT_L3 in supported_measurements:
-                    value = self.meter.md_current_L3()
-                    self.minute_data.add(MeasurementType.CURRENT_L3.valuename, value)
-                    measurements[MeasurementType.CURRENT_L3.valuename] = value
-
-            ###################################################################
-            # Other
-            ###################################################################
-            if MeasurementType.POWER_FACTOR in supported_measurements:
+            elif measurement_type == MeasurementType.CURRENT_L1:
+                value = self.meter.md_current_L1()
+            elif measurement_type == MeasurementType.CURRENT_L2:
+                value = self.meter.md_current_L2()
+            elif measurement_type == MeasurementType.CURRENT_L3:
+                value = self.meter.md_current_L3()
+            elif measurement_type == MeasurementType.POWER_FACTOR:
                 value = self.meter.md_powerfactor()
-                self.minute_data.add(MeasurementType.POWER_FACTOR.valuename, value)
-                measurements[MeasurementType.POWER_FACTOR.valuename] = value
-
-            if MeasurementType.FREQUENCY in supported_measurements:
+            elif measurement_type == MeasurementType.FREQUENCY:
                 value = self.meter.md_frequency()
-                self.minute_data.add(MeasurementType.FREQUENCY.valuename, value)
-                measurements[MeasurementType.FREQUENCY.valuename] = value
-
-            ###################################################################
-            # Totals
-            ###################################################################
-
-            if MeasurementType.ENERGY_TOTAL in supported_measurements:
+            elif measurement_type == MeasurementType.ENERGY_TOTAL:
                 value = self.meter.ed_total()
-                self.minute_data.set(MeasurementType.ENERGY_TOTAL.valuename, value)
-                measurements[MeasurementType.ENERGY_TOTAL.valuename] = value
-
-            if MeasurementType.ENERGY_TOTAL_EXPORT in supported_measurements:
+            elif measurement_type == MeasurementType.ENERGY_TOTAL_EXPORT:
                 value = self.meter.ed_total_export()
-                self.minute_data.set(MeasurementType.ENERGY_TOTAL_EXPORT.valuename, value)
-                measurements[MeasurementType.ENERGY_TOTAL_EXPORT.valuename] = value
-
-            if MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT in supported_measurements:
+            elif measurement_type == MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT:
                 value = self.meter.ed_total_reactive_import()
-                self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename, value)
-                measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT.valuename] = value
-
-            if MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT in supported_measurements:
+            elif measurement_type == MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT:
                 value = self.meter.ed_total_reactive_export()
-                self.minute_data.set(MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename, value)
-                measurements[MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT.valuename] = value
+            else:
+                continue
+
+            # Store the measurement for later average computation in slow loop
+            if measurement_type in {MeasurementType.ENERGY_TOTAL, MeasurementType.ENERGY_TOTAL_EXPORT,
+                                  MeasurementType.ENERGY_TOTAL_REACTIVE_IMPORT, MeasurementType.ENERGY_TOTAL_REACTIVE_EXPORT}:
+                self.minute_data.set(measurement_type.valuename, value)
+            else:
+                self.minute_data.add(measurement_type.valuename, value)
+            measurements[measurement_type.valuename] = value
+        
+        return measurements
+
+    def pushMeasurements(self):
+        """Perform all configured measurements and publish them to MQTT topics"""
+        try:
+            # Perform all configured measurements
+            measurements = self.doMeasurements()
                 
         except ModbusTCPConnectionError as e:
             logging.error(f"TCP connection error during measurements for {self.name}: {e}")
@@ -329,21 +310,37 @@ class MeterDataHandler():
             logging.error(f"Error reading measurements for {self.name}: {e}")
             return
 
+        # Filter measurements based on frequency for each topic
+        mqtt_measurements = {"timestamp": measurements["timestamp"]}
+        ha_measurements = {"timestamp": measurements["timestamp"]}
+        
+        for measurement_type in MEASUREMENTS_TO_PERFORM:
+            measurement_name = measurement_type.valuename
+            if measurement_name in measurements:
+                # Check frequency for self.topic
+                if MEASUREMENTS_TO_PERFORM[measurement_type]["mqtt"] == MeasurementFrequency.FAST:
+                    mqtt_measurements[measurement_name] = measurements[measurement_name]
+                
+                # Check frequency for self.ha_statetopic
+                if MEASUREMENTS_TO_PERFORM[measurement_type]["ha"] == MeasurementFrequency.FAST:
+                    ha_measurements[measurement_name] = measurements[measurement_name]
+
         # If we are expected to publish to our separate topic, do so...
-        if self.topic or self.ha:
+        if self.topic and len(mqtt_measurements) > 1:
             # Convert to JSON
-            jsondata = json.dumps(measurements)
+            jsondata = json.dumps(mqtt_measurements)
             logging.info("---- JSON Data ----------------------------------------------------------------------------\n" + jsondata)
+            # Post to MQTT server
+            logging.info("-> Published to: " + self.topic)
+            self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
 
-            if self.topic:
-                # Post to MQTT server
-                logging.info("-> Published to: " + self.topic)
-                self.mqttclient.publish(self.topic, payload = jsondata, qos=1)
-
-            if self.ha:
-                # In case we need to publish to HA, also do that
-                logging.info("-> Published to: " + self.ha_statetopic)
-                self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
+        if self.ha and len(ha_measurements) > 1:
+            # Convert to JSON
+            jsondata = json.dumps(ha_measurements)
+            logging.info("---- JSON Data ----------------------------------------------------------------------------\n" + jsondata)
+            # In case we need to publish to HA, also do that
+            logging.info("-> Published to: " + self.ha_statetopic)
+            self.mqttclient.publish(self.ha_statetopic, payload = jsondata, qos=1)
 
     def pushAverageMeasurements(self):
          # Retrieve averages of past 60 minutes
@@ -364,7 +361,7 @@ class MeterDataHandler():
 ########################################################################################
 
 
-# This pushes the data every 5 seconds for analytical purposes
+# This pushes the data every 5 seconds for analytical purposes (FAST loop)
 def loop_fast(meters):
     # Skip if no connection
     if not meters or not meters[0].meter._modbus.is_connected:
